@@ -1,3 +1,6 @@
+#ifndef TRANSE_H
+#define TRANSE_H
+
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -66,6 +69,8 @@ intT batchSize;
 ULL seed = 0x1f;
 
 void init() {
+  clock_t stt = clock(); printf("START INITIALING...\n");
+
   FILE *fin;
   intT tmp;
 
@@ -84,19 +89,19 @@ void init() {
 
   intT *rFreqList = (intT *) malloc(relationNum * sizeof(intT));
 
-  headBegins = (intT *) malloc(entityNum * sizeof(intT));
-  headEnds   = (intT *) malloc(entityNum * sizeof(intT));
-  tailBegins = (intT *) malloc(entityNum * sizeof(intT));
-  tailEnds   = (intT *) malloc(entityNum * sizeof(intT));
+  headBegins = (intT *) malloc(entityNum*4 * sizeof(intT));
+  headEnds   = headBegins + entityNum;
+  tailBegins = headEnds   + entityNum;
+  tailEnds   = tailBegins + entityNum;
 
   headMeanList = (floatT *) malloc(relationNum * 2 * sizeof(floatT));
   tailMeanList = headMeanList + relationNum;
 
   fin = fopen((inputBaseDir + "train2id.txt").c_str(), "r");
   tmp = fscanf(fin, "%d", &tripleNum);
-  trainList = (Triple *) malloc(tripleNum * sizeof(Triple));
-  trainHead = (Triple *) malloc(tripleNum * sizeof(Triple));
-  trainTail = (Triple *) malloc(tripleNum * sizeof(Triple));
+  trainList = (Triple *) malloc(tripleNum*3 * sizeof(Triple));
+  trainHead = trainList + tripleNum;
+  trainTail = trainHead + tripleNum;
 
   // Initialize vectors and calc stats
   for (intT i = 0; i < relationNum; i++) {
@@ -113,10 +118,12 @@ void init() {
 
   for (intT i = 0; i < tripleNum; i++) {
     tmp = fscanf(fin, "%d %d %d", &trainList[i].h, &trainList[i].t, &trainList[i].r);
+    trainHead[i] = trainList[i];
+    trainTail[i] = trainList[i];
   }
   fclose(fin);
-  memcpy(trainHead, trainList, tripleNum * sizeof(Triple));
-  memcpy(trainTail, trainList, tripleNum * sizeof(Triple));
+  // memcpy(trainHead, trainList, tripleNum * sizeof(Triple));
+  // memcpy(trainTail, trainList, tripleNum * sizeof(Triple));
 
   sort(trainHead, trainHead + tripleNum, cmp_head());
   sort(trainTail, trainTail + tripleNum, cmp_tail());
@@ -134,8 +141,8 @@ void init() {
       headEnds[trainHead[i-1].h] = i-1;
       headBegins[trainHead[i].h] = i;
     }
-  }
-  for (intT i = 1; i < tripleNum; i++) {
+  // }
+  // for (intT i = 1; i < tripleNum; i++) {
     if (trainTail[i-1].t != trainTail[i].t) {
       tailEnds[trainTail[i-1].t] = i-1;
       tailBegins[trainTail[i].t] = i;
@@ -163,14 +170,17 @@ void init() {
   }
   // cleanup temp buffer
   free (rFreqList);
+  clock_t end = clock(); printf("FINISH INIT, duration: %.3fs\n", 1.0 * (end-stt) / CLOCKS_PER_SEC);
 }
 
 void finish() {
   free (vecBuf);
-  free (headBegins); free (headEnds);
-  free (tailBegins); free (tailEnds);
+  free (headBegins);
+  // free (headEnds);
+  // free (tailBegins); free (tailEnds);
   free (headMeanList);
-  free (trainList); free (trainHead); free (trainTail);
+  free (trainList);
+  // free (trainHead); free (trainTail);
 }
 
 inline floatT tripleDiff(floatT *hVec, floatT *tVec, floatT *rVec) {
@@ -228,16 +238,20 @@ inline intT getNegTail(ULL *id, intT h, intT r) {
   rig = headEnds[h];
   while (lef + 1 < rig) {
     mid = (lef + rig) >> 1;
-    if (trainHead[mid].r >= r) rig = mid; else
-    lef = mid;
+    if (trainHead[mid].r >= r)
+      rig = mid;
+    else
+      lef = mid;
   }
   ll = rig;
   lef = headBegins[h];
   rig = headEnds[h]+1;
   while (lef + 1 < rig) {
     mid = (lef + rig) >> 1;
-    if (trainHead[mid].r <= r) lef = mid; else
-    rig = mid;
+    if (trainHead[mid].r <= r)
+      lef = mid;
+    else
+      rig = mid;
   }
   rr = lef;
   intT tmp = rand_max(id, entityNum - (rr - ll + 1));
@@ -260,16 +274,20 @@ inline intT getNegHead(ULL *id, intT t, intT r) {
   rig = tailEnds[t];
   while (lef + 1 < rig) {
     mid = (lef + rig) >> 1;
-    if (trainTail[mid].r >= r) rig = mid; else
-    lef = mid;
+    if (trainTail[mid].r >= r)
+      rig = mid;
+    else
+      lef = mid;
   }
   ll = rig;
   lef = tailBegins[t];
   rig = tailEnds[t] + 1;
   while (lef + 1 < rig) {
     mid = (lef + rig) >> 1;
-    if (trainTail[mid].r <= r) lef = mid; else
-    rig = mid;
+    if (trainTail[mid].r <= r)
+      lef = mid;
+    else
+      rig = mid;
   }
   rr = lef;
   intT tmp = rand_max(id, entityNum - (rr - ll + 1));
@@ -287,19 +305,8 @@ inline intT getNegHead(ULL *id, intT t, intT r) {
 }
 
 void* train_thread(void *con) {
-  intT pr, i, j;
-  // id = (unsigned long long)(*(intT *)con);
-
-  // yifan: slightly different with Fast-transX
-  // floatT *vecBuf = (floatT *) malloc(4 * dimension * sizeof(floatT));
-  // floatT *hVec = vecBuf;
-  // floatT *tVec = hVec + dimension;
-  // floatT *rVec = tVec + dimension;
-  // floatT *jVec = rVec + dimension;
-
   floatT *hVec, *tVec, *rVec, *jVec;
-
-  for (intT k = batchSize; k >= 0; k--) {
+  for (intT pr, i, j, k = batchSize; k >= 0; k--) {
     i = rand_max(&seed, tripleNum);
 
     pr = bernFlag ? 1000 * headMeanList[trainList[i].r] / (headMeanList[trainList[i].r] + tailMeanList[trainList[i].r])
@@ -317,11 +324,12 @@ void* train_thread(void *con) {
     tripleTrain(hVec, tVec, rVec, jVec, jHeadFlag);
     norm(hVec, dimension); norm(tVec, dimension); norm(rVec, dimension); norm(jVec, dimension);
   }
-
   return NULL;
 }
 
 void train() {
+  clock_t stt = clock(); printf("START TRAINING...\n");
+
   batchSize = tripleNum / nbatches;
   for (intT e = 0; e < epochs; e++) {
     res = 0.0;
@@ -330,37 +338,8 @@ void train() {
     }
     printf("epoch %d %f\n", e, res);
   }
+
+  clock_t end = clock(); printf("END TRAINING. Duration: %.3fs\n", 1.0 * (end - stt) / CLOCKS_PER_SEC);
 }
 
-int ArgPos(char *str, int argc, char **argv) {
-  int a;
-  for (a = 1; a < argc; a++) if (!strcmp(str, argv[a])) {
-    if (a == argc - 1) {
-      printf("Argument missing for %s\n", str);
-      exit(1);
-    }
-    return a;
-  }
-  return -1;
-}
-
-void setparameters(int argc, char **argv) {
-  int i;
-  if ((i = ArgPos((char *)"-size", argc, argv)) > 0) dimension = atoi(argv[i + 1]);
-  if ((i = ArgPos((char *)"-input", argc, argv)) > 0) inputBaseDir = argv[i + 1];
-  if ((i = ArgPos((char *)"-output", argc, argv)) > 0) outputBaseDir = argv[i + 1];
-  if ((i = ArgPos((char *)"-epochs", argc, argv)) > 0) epochs = atoi(argv[i + 1]);
-  if ((i = ArgPos((char *)"-nbatches", argc, argv)) > 0) nbatches = atoi(argv[i + 1]);
-  if ((i = ArgPos((char *)"-alpha", argc, argv)) > 0) alpha = atof(argv[i + 1]);
-  if ((i = ArgPos((char *)"-margin", argc, argv)) > 0) margin = atof(argv[i + 1]);
-  if ((i = ArgPos((char *)"-load-binary", argc, argv)) > 0) loadBinaryFlag = atoi(argv[i + 1]);
-  if ((i = ArgPos((char *)"-out-binary", argc, argv)) > 0) outBinaryFlag = atoi(argv[i + 1]);
-}
-
-int main(int argc, char *argv[]) {
-  setparameters(argc, argv);
-  init();
-  train();
-  finish();
-  return 0;
-}
+#endif // !TRANSE_H
