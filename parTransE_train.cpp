@@ -17,6 +17,7 @@ extern intT dimension;
 extern intT bernFlag;
 extern intT epochs;
 extern intT nbatches;
+extern intT threads;
 
 // Arguments
 extern intT loadBinaryFlag;
@@ -113,6 +114,9 @@ void show_args() {
       break;                                                      \
     case 'b':                                                     \
       loadBinaryFlag = 1;                                         \
+      break;                                                      \
+    case 't':                                                     \
+      threads = atoi(optarg);                                     \
       break;                                                      \
     case 'e':                                                     \
       epochs = atoi(optarg);                                      \

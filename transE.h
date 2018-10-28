@@ -141,8 +141,8 @@ void init() {
       headEnds[trainHead[i-1].h] = i-1;
       headBegins[trainHead[i].h] = i;
     }
-  // }
-  // for (intT i = 1; i < tripleNum; i++) {
+  }
+  for (intT i = 1; i < tripleNum; i++) {
     if (trainTail[i-1].t != trainTail[i].t) {
       tailEnds[trainTail[i-1].t] = i-1;
       tailBegins[trainTail[i].t] = i;

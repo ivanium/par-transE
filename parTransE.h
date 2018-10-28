@@ -11,12 +11,11 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <omp.h>
 
 #include "parallel.h"
 #include "util.h"
-
-#include <iostream>
 
 using namespace std;
 
@@ -47,6 +46,7 @@ intT dimension= 100;
 intT bernFlag = 0;
 intT epochs   = 1000;
 intT nbatches = 1;
+int threads = 32;
 
 // Arguments
 intT loadBinaryFlag = 0;
@@ -67,10 +67,19 @@ floatT *headMeanList, *tailMeanList;
 // Global Variable
 floatT res = 0.0;
 intT batchSize;
-ULL seed = 0x1f;
+intT blockSize;
+ULL *seed;
+
 
 void init() {
-  clock_t stt = clock(); printf("START INITIALING...\n");
+  struct timeval stt; gettimeofday(&stt, NULL);
+  printf("START INITIALING...\n");
+
+  omp_set_num_threads(threads);
+  seed = (ULL *) malloc(threads * sizeof(ULL));
+  for (int i = 1; i <= threads; i++) {
+    seed[i] = i;
+  }
 
   FILE *fin;
   intT tmp;
@@ -107,14 +116,14 @@ void init() {
   // Initialize vectors and calc stats
   #pragma omp parallel for
   for (intT i = 0; i < relationNum; i++) {
-    ULL seed = omp_get_thread_num();
+    ULL seed = i;
     for (int ii = 0; ii < dimension; ii++) {
       rVecBuf[i*dimension + ii] = randn(&seed, 0.0, 1.0/dimension, -6/sqrt(dimension), 6/sqrt(dimension));
     }
   }
   #pragma omp parallel for
   for (intT i = 0; i < entityNum; i++) {
-    ULL seed = omp_get_thread_num();
+    ULL seed = i;
     for (int ii = 0; ii < dimension; ii++) {
       eVecBuf[i*dimension + ii] = randn(&seed, 0.0, 1.0/dimension, -6/sqrt(dimension), 6/sqrt(dimension));
     }
@@ -133,8 +142,8 @@ void init() {
 
   #pragma omp parallel for
   for (intT i = 0; i < tripleNum; i++) {
-    #pragma omp atomic
-    rFreqList[trainHead[i].r]++;
+    // rFreqList[trainHead[i].r]++;
+    __sync_fetch_and_add(rFreqList + trainHead[i].r, 1);
   }
 
   headBegins[0] = tailBegins[0] = 0;
@@ -178,17 +187,16 @@ void init() {
   }
   // cleanup temp buffer
   free (rFreqList);
-  clock_t end = clock(); printf("FINISH INIT, duration: %.3fs\n", 1.0 * (end-stt) / CLOCKS_PER_SEC);
+  struct timeval end; gettimeofday(&end, NULL);
+  printf("FINISH INIT, duration: %.3fs\n", (end.tv_sec-stt.tv_sec) + (end.tv_usec-stt.tv_usec)/1e6);
 }
 
 void finish() {
   free (vecBuf);
   free (headBegins);
-  // free (headEnds);
-  // free (tailBegins); free (tailEnds);
   free (headMeanList);
   free (trainList);
-  // free (trainHead); free (trainTail);
+  free (seed);
 }
 
 inline floatT tripleDiff(floatT *hVec, floatT *tVec, floatT *rVec) {
@@ -312,17 +320,21 @@ inline intT getNegHead(ULL *id, intT t, intT r) {
   return tmp + lef - ll + 1;
 }
 
-void* train_thread(void *con) {
-  floatT *hVec, *tVec, *rVec, *jVec;
-  for (intT pr, i, j, k = batchSize; k >= 0; k--) {
-    i = rand_max(&seed, tripleNum);
+void train_thread(int tid) {
+  intT begin = tid*blockSize;
+  intT end   = tid == threads-1 ? batchSize : begin + blockSize;
+  for (intT k = begin; k < end; k++) {
+    intT pr, i, j;
+    floatT *hVec, *tVec, *rVec, *jVec;
+    // i = rand_max(&seed[tid], tripleNum);
+    i = k;
 
     pr = bernFlag ? 1000 * headMeanList[trainList[i].r] / (headMeanList[trainList[i].r] + tailMeanList[trainList[i].r])
                   : 500;
 
-    bool jHeadFlag = !(rand_max(&seed, 1000) < pr);
-    j = jHeadFlag ? getNegHead(&seed, trainList[i].t, trainList[i].r)
-                  : getNegTail(&seed, trainList[i].h, trainList[i].r);
+    bool jHeadFlag = !(rand_max(&seed[tid], 1000) < pr);
+    j = jHeadFlag ? getNegHead(&seed[tid], trainList[i].t, trainList[i].r)
+                  : getNegTail(&seed[tid], trainList[i].h, trainList[i].r);
 
     hVec = eVecBuf + dimension * trainList[i].h;
     tVec = eVecBuf + dimension * trainList[i].t;
@@ -332,22 +344,27 @@ void* train_thread(void *con) {
     tripleTrain(hVec, tVec, rVec, jVec, jHeadFlag);
     norm(hVec, dimension); norm(tVec, dimension); norm(rVec, dimension); norm(jVec, dimension);
   }
-  return NULL;
 }
 
 void train() {
-  clock_t stt = clock(); printf("START TRAINING...\n");
+  struct timeval stt; gettimeofday(&stt, NULL);
+  printf("START TRAINING...\n");
 
   batchSize = tripleNum / nbatches;
+  blockSize = batchSize / threads;
   for (intT e = 0; e < epochs; e++) {
     res = 0.0;
     for (intT batch = 0; batch < nbatches; batch++) {
-      train_thread((void *) &e);
+      #pragma omp parallel for reduction(+:res)
+      for (int i = 0; i < threads; i++) {
+        train_thread(i);
+      }
     }
     printf("epoch %d %f\n", e, res);
   }
 
-  clock_t end = clock(); printf("END TRAINING. Duration: %.3fs\n", 1.0 * (end - stt) / CLOCKS_PER_SEC);
+  struct timeval end; gettimeofday(&end, NULL);
+  printf("END TRAINING. Duration: %.3fs\n", (end.tv_sec-stt.tv_sec) + (end.tv_usec-stt.tv_usec)/(1e6));
 }
 
 #endif // !PARTRANSE_H
