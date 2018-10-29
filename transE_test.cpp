@@ -150,11 +150,10 @@ void show_args() {
 
 int main(int argc, char *argv[]) {
   parseCmdArgs(argc, argv);
-  trainInit();
-  if (loadDir != "") load();
-  train();
-  if (outputDir != "") output();
-  trainFinish();
+  testInit();
+  load();
+  test();
+  testFinish();
   return 0;
 }
 
