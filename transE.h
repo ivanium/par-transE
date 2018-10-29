@@ -11,11 +11,10 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 
 #include "parallel.h"
 #include "util.h"
-
-#include <iostream>
 
 using namespace std;
 
@@ -50,9 +49,10 @@ intT nbatches = 1;
 // Arguments
 intT loadBinaryFlag = 0;
 intT outBinaryFlag = 0;
-string inputBaseDir = "./";
-string outputBaseDir = "";
+string inputDir = "./";
+string outputDir = "";
 string loadDir = "";
+string note = "";
 
 // Buffer
 Triple *trainHead, *trainTail, *trainList;
@@ -68,17 +68,20 @@ floatT res = 0.0;
 intT batchSize;
 ULL seed = 0x1f;
 
-void init() {
-  clock_t stt = clock(); printf("START INITIALING...\n");
+
+// TRAIN
+void trainInit() {
+  struct timeval stt; gettimeofday(&stt, NULL);
+  printf("START TRAIN INITIALIZATION ...\n");
 
   FILE *fin;
   intT tmp;
 
-  fin = fopen((inputBaseDir + "relation2id.txt").c_str(), "r");
+  fin = fopen((inputDir + "relation2id.txt").c_str(), "r");
   tmp = fscanf(fin, "%d", &relationNum);
   fclose(fin);
 
-  fin = fopen((inputBaseDir + "entity2id.txt").c_str(), "r");
+  fin = fopen((inputDir + "entity2id.txt").c_str(), "r");
   tmp = fscanf(fin, "%d", &entityNum);
   fclose(fin);
 
@@ -97,7 +100,7 @@ void init() {
   headMeanList = (floatT *) malloc(relationNum * 2 * sizeof(floatT));
   tailMeanList = headMeanList + relationNum;
 
-  fin = fopen((inputBaseDir + "train2id.txt").c_str(), "r");
+  fin = fopen((inputDir + "train2id.txt").c_str(), "r");
   tmp = fscanf(fin, "%d", &tripleNum);
   trainList = (Triple *) malloc(tripleNum*3 * sizeof(Triple));
   trainHead = trainList + tripleNum;
@@ -170,10 +173,11 @@ void init() {
   }
   // cleanup temp buffer
   free (rFreqList);
-  clock_t end = clock(); printf("FINISH INIT, duration: %.3fs\n", 1.0 * (end-stt) / CLOCKS_PER_SEC);
+  struct timeval end; gettimeofday(&end, NULL);
+  printf("FINISH TRAIN INITIALIZATION, INIT duration: %.3fs\n", (end.tv_sec-stt.tv_sec) + (end.tv_usec-stt.tv_usec)/1e6);
 }
 
-void finish() {
+void trainFinish() {
   free (vecBuf);
   free (headBegins);
   // free (headEnds);
@@ -304,7 +308,7 @@ inline intT getNegHead(ULL *id, intT t, intT r) {
   return tmp + lef - ll + 1;
 }
 
-void* train_thread(void *con) {
+void train_thread() {
   floatT *hVec, *tVec, *rVec, *jVec;
   for (intT pr, i, j, k = batchSize; k >= 0; k--) {
     i = rand_max(&seed, tripleNum);
@@ -324,22 +328,130 @@ void* train_thread(void *con) {
     tripleTrain(hVec, tVec, rVec, jVec, jHeadFlag);
     norm(hVec, dimension); norm(tVec, dimension); norm(rVec, dimension); norm(jVec, dimension);
   }
-  return NULL;
 }
 
 void train() {
-  clock_t stt = clock(); printf("START TRAINING...\n");
+  struct timeval stt; gettimeofday(&stt, NULL);
+  printf("START TRAINING ...\n");
 
   batchSize = tripleNum / nbatches;
+  floatT *hVec, *tVec, *rVec, *jVec;
   for (intT e = 0; e < epochs; e++) {
     res = 0.0;
     for (intT batch = 0; batch < nbatches; batch++) {
-      train_thread((void *) &e);
+      for (intT pr, i, j, k = 0; k <= batchSize; k++) {
+        i = rand_max(&seed, tripleNum);
+        // i = k;
+
+        pr = bernFlag ? 1000 * headMeanList[trainList[i].r] / (headMeanList[trainList[i].r] + tailMeanList[trainList[i].r])
+                      : 500;
+
+        bool jHeadFlag = rand_max(&seed, 1000) >= pr;
+        j = jHeadFlag ? getNegHead(&seed, trainList[i].t, trainList[i].r)
+                      : getNegTail(&seed, trainList[i].h, trainList[i].r);
+
+        hVec = eVecBuf + dimension * trainList[i].h;
+        tVec = eVecBuf + dimension * trainList[i].t;
+        rVec = rVecBuf + dimension * trainList[i].r;
+        jVec = eVecBuf + dimension * j;
+
+        tripleTrain(hVec, tVec, rVec, jVec, jHeadFlag);
+        norm(hVec, dimension); norm(tVec, dimension); norm(rVec, dimension); norm(jVec, dimension);
+      }
     }
     printf("epoch %d %f\n", e, res);
   }
 
-  clock_t end = clock(); printf("END TRAINING. Duration: %.3fs\n", 1.0 * (end - stt) / CLOCKS_PER_SEC);
+  struct timeval end; gettimeofday(&end, NULL);
+  printf("END TRAINING. TRAIN duration: %.3fs\n", (end.tv_sec-stt.tv_sec) + (end.tv_usec-stt.tv_usec)/(1e6));
+}
+
+
+// Load vec file and output train result
+void load() {
+  if (loadBinaryFlag) {
+    struct stat statbuf;
+    if (stat((loadDir + "entity2vec" + note + ".bin").c_str(), &statbuf) != -1) {  
+      intT fd = open((loadDir + "entity2vec" + note + ".bin").c_str(), O_RDONLY);
+      floatT* eVecTmp = (floatT*)mmap(NULL, statbuf.st_size, PROT_READ, MAP_PRIVATE, fd, 0); 
+      memcpy(eVecBuf, eVecTmp, statbuf.st_size);
+      munmap(eVecTmp, statbuf.st_size);
+      close(fd);
+    }
+    if (stat((loadDir + "relation2vec" + note + ".bin").c_str(), &statbuf) != -1) {  
+      intT fd = open((loadDir + "relation2vec" + note + ".bin").c_str(), O_RDONLY);
+      floatT* rVecTmp =(floatT*)mmap(NULL, statbuf.st_size, PROT_READ, MAP_PRIVATE, fd, 0); 
+      memcpy(rVecBuf, rVecTmp, statbuf.st_size);
+      munmap(rVecTmp, statbuf.st_size);
+      close(fd);
+    }
+  } else {
+    FILE *fin;
+    int tmp;
+    fin = fopen((loadDir + "entity2vec" + note + ".vec").c_str(), "r");
+
+    int offset = 0;
+    for (intT i = 0; i < entityNum; i++) {
+      for (intT ii = 0; ii < dimension; ii++) {
+        tmp = fscanf(fin, "%f", &eVecBuf[offset + ii]);
+      }
+      offset += dimension;
+    }
+    fclose(fin);
+    offset = 0;
+    fin = fopen((loadDir + "relation2vec" + note + ".vec").c_str(), "r");
+    for (intT i = 0; i < relationNum; i++) {
+      for (intT ii = 0; ii < dimension; ii++) {
+        tmp = fscanf(fin, "%f", &rVecBuf[offset + ii]);
+      }
+      offset += dimension;
+    }
+    fclose(fin);
+  }
+}
+
+void output() {
+  if (outBinaryFlag) {
+    intT len, tot;
+    floatT *head;
+    FILE* f2 = fopen((outputDir + "relation2vec" + note + ".bin").c_str(), "wb");
+    FILE* f3 = fopen((outputDir + "entity2vec" + note + ".bin").c_str(), "wb");
+    len = relationNum * dimension; tot = 0;
+    head = rVecBuf;
+    while (tot < len) {
+      intT sum = fwrite(head + tot, sizeof(floatT), len - tot, f2);
+      tot += sum;
+    }
+    len = entityNum * dimension; tot = 0;
+    head = eVecBuf;
+    while (tot < len) {
+      intT sum = fwrite(head + tot, sizeof(floatT), len - tot, f3);
+      tot += sum;
+    }	
+    fclose(f2);
+    fclose(f3);
+  } else {
+    FILE* f2 = fopen((outputDir + "relation2vec" + note + ".vec").c_str(), "w");
+    FILE* f3 = fopen((outputDir + "entity2vec" + note + ".vec").c_str(), "w");
+    intT offset = 0;
+    for (intT i = 0; i < relationNum; i++) {
+      for (intT ii = 0; ii < dimension; ii++) {
+        fprintf(f2, "%.6f\t", rVecBuf[offset + ii]);
+      }
+      fprintf(f2,"\n");
+      offset += dimension;
+    }
+    fclose(f2);
+    offset = 0;
+    for (intT i = 0; i < entityNum; i++) {
+      for (intT ii = 0; ii < dimension; ii++) {
+        fprintf(f3, "%.6f\t", eVecBuf[offset + ii]);
+      }
+      fprintf(f3,"\n");
+      offset += dimension;
+    }
+    fclose(f3);
+  }
 }
 
 #endif // !TRANSE_H

@@ -21,11 +21,12 @@ extern intT nbatches;
 // Arguments
 extern intT loadBinaryFlag;
 extern intT outBinaryFlag;
-extern std::string inputBaseDir;
-extern std::string outputBaseDir;
+extern std::string inputDir;
+extern std::string outputDir;
 extern std::string loadDir;
+extern std::string note;
 
-static const char *optString = "s:i:o:Bl:be:n:a:m:h?";
+static const char *optString = "s:i:o:Bl:bN:e:n:a:m:vh?";
 
 static const struct option longOpts[] = {
     {"size", required_argument, NULL, 's'},
@@ -34,6 +35,7 @@ static const struct option longOpts[] = {
     {"output-bin", no_argument, NULL, 'B'},
     {"load", required_argument, NULL, 'l'},
     {"load-bin", no_argument, NULL, 'b'},
+    {"note", required_argument, NULL, 'N'},
     {"threads", required_argument, NULL, 't'},
     {"epochs", required_argument, NULL, 'e'},
     {"nbatchs", required_argument, NULL, 'n'},
@@ -74,11 +76,12 @@ void display_usage(void) {
 void show_args() {
   printf("----------ARGUMENTS----------\n");
   printf("size: %d\n", dimension);
-  printf("input: %s\n", inputBaseDir.c_str());
-  printf("output: %s\n", outputBaseDir.c_str());
+  printf("input: %s\n", inputDir.c_str());
+  printf("output: %s\n", outputDir.c_str());
   printf("output-bin: %d\n", outBinaryFlag);
   printf("load: %s\n", loadDir.c_str());
   printf("load-bin: %d\n", loadBinaryFlag);
+  printf("note: %s\n", note.c_str());
   printf("epochs: %d\n", epochs);
   printf("nbatchs: %d\n", nbatches);
   printf("alpha: %.3f\n", alpha);
@@ -100,10 +103,10 @@ void show_args() {
       dimension = atoi(optarg);                                   \
       break;                                                      \
     case 'i':                                                     \
-      inputBaseDir = optarg;                                      \
+      inputDir = optarg;                                          \
       break;                                                      \
     case 'o':                                                     \
-      outputBaseDir = optarg;                                     \
+      outputDir = optarg;                                         \
       break;                                                      \
     case 'B':                                                     \
       outBinaryFlag = 1;                                          \
@@ -113,6 +116,9 @@ void show_args() {
       break;                                                      \
     case 'b':                                                     \
       loadBinaryFlag = 1;                                         \
+      break;                                                      \
+    case 'N':                                                     \
+      note = optarg;                                              \
       break;                                                      \
     case 'e':                                                     \
       epochs = atoi(optarg);                                      \
@@ -144,9 +150,9 @@ void show_args() {
 
 int main(int argc, char *argv[]) {
   parseCmdArgs(argc, argv);
-  init();
+  trainInit();
   train();
-  finish();
+  trainFinish();
   return 0;
 }
 
