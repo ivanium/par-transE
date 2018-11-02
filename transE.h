@@ -512,14 +512,16 @@ void testInit() {
   tripleList = (LabelTriple *) malloc(tripleNum * dimension * sizeof(LabelTriple));
   testList = (LabelTriple *) malloc(testTripleNum * dimension * sizeof(LabelTriple));
 
-  intT label;
+  intT label, h, t, r;
   for (intT i = 0; i < testTripleNum; i++) {
-    tmp = fscanf(f_kb1, "%d %d %d %d", &label, &testList[i].h, &testList[i].t, &testList[i].r);
+    tmp = fscanf(f_kb1, "%d %d %d %d", &label, &h, &t, &r);
     label++;
     nnTotal[label]++;
+    testList[i].h = h; testList[i].t = t; testList[i].r = r;
     testList[i].label = label;
+    tripleList[i].h = h; tripleList[i].t = t; tripleList[i].r = r;
   }
-  memcpy(testList, tripleList, testTripleNum * dimension * sizeof(floatT));
+  // memcpy(testList, tripleList, testTripleNum * dimension * sizeof(floatT));
 
   LabelTriple *tmpTrainList = tripleList + testTripleNum;
   LabelTriple *tmpValidList = tmpTrainList + trainTripleNum;
@@ -593,8 +595,8 @@ void testMode(int tid) {
     floatT *jVec;
 
     floatT minimal = tripleDiff(hVec, tVec, rVec);
-    intT l_filter_s = 0; intT l_s = 0; intT r_filter_s = 0; intT r_s = 0;
-    intT l_filter_s_constrain = 0; intT l_s_constrain = 0; intT r_filter_s_constrain = 0; intT r_s_constrain = 0;
+    intT l_filter_s = 0; intT l_s = 0; intT l_filter_s_constrain = 0; intT l_s_constrain = 0;
+    intT r_filter_s = 0; intT r_s = 0; intT r_filter_s_constrain = 0; intT r_s_constrain = 0;
     intT hType = headBegins[r]; intT tType = tailBegins[r];
     for (intT j = 0; j < entityNum; j++) {
       jVec = eVecBuf + j * dimension;

@@ -1,6 +1,3 @@
-#ifndef PARSECMDLINE_H
-#define PARSECMDLINE_H
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -157,5 +154,3 @@ int main(int argc, char *argv[]) {
   trainFinish();
   return 0;
 }
-
-#endif // !PARSECMDLINE_H
