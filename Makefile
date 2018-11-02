@@ -19,5 +19,7 @@ parrun:
 	g++ -std=c++11 parTransE_train.cpp -o parTransE_train.bin -O3 -march=native --openmp
 	./parTransE_train.bin --size 128 --input ../Fast-TransX/data/FB15K/ --output ./ --epochs 1000 --threads 1 --v
 
+ga:
+	g++ -std=c++11 graphAnalyze.cpp -o graphAnalyze.bin -O3
 clean:
 	-rm *.bin
