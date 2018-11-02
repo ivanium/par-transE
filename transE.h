@@ -518,8 +518,11 @@ void testInit() {
     label++;
     nnTotal[label]++;
     testList[i].label = label;
+    tripleList[i].h = testList[i].h;
+    tripleList[i].t = testList[i].t;
+    tripleList[i].r = testList[i].r;
   }
-  memcpy(testList, tripleList, testTripleNum * dimension * sizeof(floatT));
+  // memcpy(testList, tripleList, testTripleNum * dimension * sizeof(floatT));
 
   LabelTriple *tmpTrainList = tripleList + testTripleNum;
   LabelTriple *tmpValidList = tmpTrainList + trainTripleNum;
