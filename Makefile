@@ -10,7 +10,11 @@ rerun:
 
 test:
 	g++ -std=c++11 transE_test.cpp -o transE_test.bin -O3 -march=native
-	./transE_test.bin --size 128 --input ../Fast-TransX/data/FB15K/ --output ./ --epochs 10 --v
+	./transE_test.bin --size 128 --input ../Fast-TransX/data/FB15K/ --output ./ --v
+
+partest:
+	g++ -std=c++11 parTransE_test.cpp -o pTransE_test.bin -O3 -march=native --openmp
+	./partransE_test.bin --size 128 --input ../Fast-TransX/data/FB15K/ --output ./ --threads 1 --v
 
 par:
 	g++ -std=c++11 parTransE_train.cpp -o parTransE_train.bin -O3 -march=native --openmp

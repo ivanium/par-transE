@@ -469,6 +469,7 @@ void output() {
   }
 }
 
+
 // TEST
 intT testTripleNum, trainTripleNum, validTripleNum;
 intT headType[1000000], tailType[1000000];

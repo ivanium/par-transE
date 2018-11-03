@@ -23,8 +23,18 @@ struct Triple {
   intT h, r, t;
 };
 
+struct LabelTriple {
+  intT label;
+  intT h, r, t;
+};
+
 struct cmp_head {
   bool operator() (const Triple &a, const Triple &b) {
+    return (a.h < b.h) ||
+           (a.h == b.h && a.r < b.r) ||
+           (a.h == b.h && a.r == b.r && a.t < b.t);
+  }
+  bool operator() (const LabelTriple &a, const LabelTriple &b) {
     return (a.h < b.h) ||
            (a.h == b.h && a.r < b.r) ||
            (a.h == b.h && a.r == b.r && a.t < b.t);
@@ -33,6 +43,11 @@ struct cmp_head {
 
 struct cmp_tail {
   bool operator() (const Triple &a, const Triple &b) {
+    return (a.t < b.t) ||
+           (a.t == b.t && a.r < b.r) ||
+           (a.t == b.t && a.r == b.r && a.h < b.h);
+  }
+  bool operator() (const LabelTriple &a, const LabelTriple &b) {
     return (a.t < b.t) ||
            (a.t == b.t && a.r < b.r) ||
            (a.t == b.t && a.r == b.r && a.h < b.h);
@@ -71,7 +86,7 @@ intT blockSize;
 ULL *seed;
 
 
-void init() {
+void trainInit() {
   struct timeval stt; gettimeofday(&stt, NULL);
   printf("START INITIALING...\n");
 
@@ -191,7 +206,7 @@ void init() {
   printf("FINISH INIT, duration: %.3fs\n", (end.tv_sec-stt.tv_sec) + (end.tv_usec-stt.tv_usec)/1e6);
 }
 
-void finish() {
+void trainFinish() {
   free (vecBuf);
   free (headBegins);
   free (headMeanList);
@@ -365,6 +380,375 @@ void train() {
 
   struct timeval end; gettimeofday(&end, NULL);
   printf("END TRAINING. Duration: %.3fs\n", (end.tv_sec-stt.tv_sec) + (end.tv_usec-stt.tv_usec)/(1e6));
+}
+
+
+// Load vec file and output train result
+void load() {
+  if (loadBinaryFlag) {
+    struct stat statbuf;
+    if (stat((loadDir + "entity2vec" + note + ".bin").c_str(), &statbuf) != -1) {  
+      intT fd = open((loadDir + "entity2vec" + note + ".bin").c_str(), O_RDONLY);
+      floatT* eVecTmp = (floatT*)mmap(NULL, statbuf.st_size, PROT_READ, MAP_PRIVATE, fd, 0); 
+      memcpy(eVecBuf, eVecTmp, statbuf.st_size);
+      munmap(eVecTmp, statbuf.st_size);
+      close(fd);
+    }
+    if (stat((loadDir + "relation2vec" + note + ".bin").c_str(), &statbuf) != -1) {  
+      intT fd = open((loadDir + "relation2vec" + note + ".bin").c_str(), O_RDONLY);
+      floatT* rVecTmp =(floatT*)mmap(NULL, statbuf.st_size, PROT_READ, MAP_PRIVATE, fd, 0); 
+      memcpy(rVecBuf, rVecTmp, statbuf.st_size);
+      munmap(rVecTmp, statbuf.st_size);
+      close(fd);
+    }
+  } else {
+    FILE *fin;
+    int tmp;
+    fin = fopen((loadDir + "entity2vec" + note + ".vec").c_str(), "r");
+
+    int offset = 0;
+    for (intT i = 0; i < entityNum; i++) {
+      for (intT ii = 0; ii < dimension; ii++) {
+        tmp = fscanf(fin, "%f", &eVecBuf[offset + ii]);
+      }
+      offset += dimension;
+    }
+    fclose(fin);
+    offset = 0;
+    fin = fopen((loadDir + "relation2vec" + note + ".vec").c_str(), "r");
+    for (intT i = 0; i < relationNum; i++) {
+      for (intT ii = 0; ii < dimension; ii++) {
+        tmp = fscanf(fin, "%f", &rVecBuf[offset + ii]);
+      }
+      offset += dimension;
+    }
+    fclose(fin);
+  }
+}
+
+void output() {
+  if (outBinaryFlag) {
+    intT len, tot;
+    floatT *head;
+    FILE* f2 = fopen((outputDir + "relation2vec" + note + ".bin").c_str(), "wb");
+    FILE* f3 = fopen((outputDir + "entity2vec" + note + ".bin").c_str(), "wb");
+    len = relationNum * dimension; tot = 0;
+    head = rVecBuf;
+    while (tot < len) {
+      intT sum = fwrite(head + tot, sizeof(floatT), len - tot, f2);
+      tot += sum;
+    }
+    len = entityNum * dimension; tot = 0;
+    head = eVecBuf;
+    while (tot < len) {
+      intT sum = fwrite(head + tot, sizeof(floatT), len - tot, f3);
+      tot += sum;
+    }	
+    fclose(f2);
+    fclose(f3);
+  } else {
+    FILE* f2 = fopen((outputDir + "relation2vec" + note + ".vec").c_str(), "w");
+    FILE* f3 = fopen((outputDir + "entity2vec" + note + ".vec").c_str(), "w");
+    intT offset = 0;
+    for (intT i = 0; i < relationNum; i++) {
+      for (intT ii = 0; ii < dimension; ii++) {
+        fprintf(f2, "%.6f\t", rVecBuf[offset + ii]);
+      }
+      fprintf(f2,"\n");
+      offset += dimension;
+    }
+    fclose(f2);
+    offset = 0;
+    for (intT i = 0; i < entityNum; i++) {
+      for (intT ii = 0; ii < dimension; ii++) {
+        fprintf(f3, "%.6f\t", eVecBuf[offset + ii]);
+      }
+      fprintf(f3,"\n");
+      offset += dimension;
+    }
+    fclose(f3);
+  }
+}
+
+
+// TEST
+intT testTripleNum, trainTripleNum, validTripleNum;
+intT headType[1000000], tailType[1000000];
+intT nnTotal[5];
+LabelTriple *tripleList, *testList;
+intT testBlockSize;
+
+floatT l_filter_tot[6], l_filter_rank[6], l_tot[6], l_rank[6];
+floatT r_filter_tot[6], r_filter_rank[6], r_tot[6], r_rank[6];
+
+void testInit() {
+  struct timeval stt; gettimeofday(&stt, NULL);
+  printf("START TEST INITIALIZATION ...\n");
+
+  FILE *fin;
+  int tmp;
+
+  fin = fopen((inputDir + "relation2id.txt").c_str(), "r");
+  tmp = fscanf(fin, "%d", &relationNum);
+  fclose(fin);
+  
+  fin = fopen((inputDir + "entity2id.txt").c_str(), "r");
+  tmp = fscanf(fin, "%d", &entityNum);
+  fclose(fin);
+
+  vecBuf = (floatT *) malloc((relationNum + entityNum) * dimension * sizeof(floatT));
+  rVecBuf = vecBuf;
+  eVecBuf = vecBuf + relationNum * dimension;
+
+  headBegins = (intT *) malloc(relationNum * 4 * sizeof(intT));
+  headEnds   = headBegins + relationNum;
+  tailBegins = headEnds   + relationNum;
+  tailEnds   = tailBegins + relationNum;
+
+  FILE* f_kb1 = fopen((inputDir + "test2id_all.txt").c_str(), "r");
+  FILE* f_kb2 = fopen((inputDir + "train2id.txt").c_str(), "r");
+  FILE* f_kb3 = fopen((inputDir + "valid2id.txt").c_str(), "r");
+  tmp = fscanf(f_kb1, "%d", &testTripleNum);
+  tmp = fscanf(f_kb2, "%d", &trainTripleNum);
+  tmp = fscanf(f_kb3, "%d", &validTripleNum);
+  tripleNum = testTripleNum + trainTripleNum + validTripleNum;
+  tripleList = (LabelTriple *) malloc(tripleNum * dimension * sizeof(LabelTriple));
+  testList = (LabelTriple *) malloc(testTripleNum * dimension * sizeof(LabelTriple));
+
+  intT label, h, t, r;
+  for (intT i = 0; i < testTripleNum; i++) {
+    tmp = fscanf(f_kb1, "%d %d %d %d", &label, &h, &t, &r);
+    label++;
+    nnTotal[label]++;
+    testList[i].h = h; testList[i].t = t; testList[i].r = r;
+    testList[i].label = label;
+    tripleList[i].h = h; tripleList[i].t = t; tripleList[i].r = r;
+  }
+  // memcpy(testList, tripleList, testTripleNum * dimension * sizeof(floatT));
+
+  LabelTriple *tmpTrainList = tripleList + testTripleNum;
+  LabelTriple *tmpValidList = tmpTrainList + trainTripleNum;
+  for (intT i = 0; i < trainTripleNum; i++) {
+    tmp = fscanf(f_kb2, "%d %d %d", &tmpTrainList[i].h, &tmpTrainList[i].t, &tmpTrainList[i].r);
+  }
+  for (intT i = 0; i < validTripleNum; i++) {
+    tmp = fscanf(f_kb2, "%d %d %d", &tmpValidList[i].h, &tmpValidList[i].t, &tmpValidList[i].r);
+  }
+  fclose(f_kb1);
+  fclose(f_kb2);
+  fclose(f_kb3);
+
+  sort(tripleList, tripleList + tripleNum, cmp_head());
+
+  intT hTypeOffset = 0, tTypeOffset = 0;
+  FILE* f_type = fopen((inputDir + "type_constrain.txt").c_str(),"r");
+  tmp = fscanf(f_type, "%d", &tmp);
+  for (intT i = 0; i < relationNum; i++) {
+    int rel, tot;
+    tmp = fscanf(f_type, "%d %d", &rel, &tot);
+    headBegins[rel] = hTypeOffset;
+    for (int j = 0; j < tot; j++) {
+      tmp = fscanf(f_type, "%d", &headType[hTypeOffset]);
+      hTypeOffset++;
+    }
+    headEnds[rel] = hTypeOffset;
+    sort(headType + headBegins[rel], headType + headEnds[rel]);
+
+    tmp = fscanf(f_type, "%d %d", &rel, &tot);
+    tailBegins[rel] = tTypeOffset;
+    for (int j = 0; j < tot; j++) {
+      tmp = fscanf(f_type, "%d", &tailType[tTypeOffset]);
+      tTypeOffset++;
+    }
+    tailEnds[rel] = tTypeOffset;
+    sort(tailType + tailBegins[rel], tailType + tailEnds[rel]);
+  }
+  fclose(f_type);
+
+  struct timeval end; gettimeofday(&end, NULL);
+  printf("END TEST INITIALIZATION. INIT duration: %.3fs\n", (end.tv_sec-stt.tv_sec) + (end.tv_usec-stt.tv_usec)/(1e6));
+}
+
+bool find(intT h, intT t, intT r) {
+  intT lef = 0;
+  intT rig = tripleNum - 1;
+  intT mid;
+  while (lef + 1 < rig) {
+    intT mid = (lef + rig) >> 1;
+    if ((tripleList[mid]. h < h) || (tripleList[mid]. h == h && tripleList[mid]. r < r) ||
+        (tripleList[mid]. h == h && tripleList[mid]. r == r && tripleList[mid]. t < t)) {
+        lef = mid;
+    } else {
+      rig = mid;
+    }
+  }
+  if ((tripleList[lef].h == h && tripleList[lef].r == r && tripleList[lef].t == t) ||
+      (tripleList[rig].h == h && tripleList[rig].r == r && tripleList[rig].t == t)) {
+      return true;
+  }
+  return false;
+}
+
+void testMode(int tid) {
+  intT begin = tid * testBlockSize;
+  intT end = tid == threads-1 ? testTripleNum : begin + testBlockSize;
+  for (intT i = begin; i < end; i++) {
+    intT h = testList[i].h, t = testList[i].t, r = testList[i].r, label = testList[i].label;
+    floatT *hVec = eVecBuf + h * dimension;
+    floatT *tVec = eVecBuf + t * dimension;
+    floatT *rVec = rVecBuf + r * dimension;
+    floatT *jVec;
+
+    floatT minimal = tripleDiff(hVec, tVec, rVec);
+    intT l_filter_s = 0; intT l_s = 0; intT l_filter_s_constrain = 0; intT l_s_constrain = 0;
+    intT r_filter_s = 0; intT r_s = 0; intT r_filter_s_constrain = 0; intT r_s_constrain = 0;
+    intT hType = headBegins[r]; intT tType = tailBegins[r];
+    for (intT j = 0; j < entityNum; j++) {
+      jVec = eVecBuf + j * dimension;
+      if (j != h) {
+        float value = tripleDiff(jVec, tVec, rVec);
+        if (value < minimal) {
+          l_s += 1;
+          if (not find(j, t, r))
+            l_filter_s += 1;
+        }
+        while (hType < headEnds[r] && headType[hType] < j) hType++;
+        if (hType < headEnds[r] && headType[hType] == j) {
+          if (value < minimal) {
+            l_s_constrain += 1;
+            if (not find(j, t, r))
+              l_filter_s_constrain += 1;
+          }
+        }
+      }
+      if (j != t) {
+        float value = tripleDiff(hVec, jVec, rVec);
+        if (value < minimal) {
+          r_s += 1;
+          if (not find(h, j, r))
+            r_filter_s += 1;
+        }
+        while (tType < tailEnds[r] && tailType[tType] < j) tType++;
+        if (tType < tailEnds[r] && tailType[tType] == j) {
+          if (value < minimal) {
+            r_s_constrain += 1;
+            if (not find(h, j, r))
+              r_filter_s_constrain += 1;
+          }
+        }
+      }
+    }
+    if (l_filter_s < 10) {
+      // l_filter_tot[0] += 1;
+      __sync_fetch_and_add(l_filter_tot, 1);
+    }
+    if (l_s < 10) {
+      // l_tot[0] += 1;
+      __sync_fetch_and_add(l_tot, 1);
+    }
+    if (r_filter_s < 10) {
+      // r_filter_tot[0] += 1;
+      __sync_fetch_and_add(r_filter_tot, 1);
+    }
+    if (r_s < 10) {
+      // r_tot[0] += 1;
+      __sync_fetch_and_add(r_tot, 1);
+    }
+    // l_filter_rank[0] += l_filter_s;
+    // r_filter_rank[0] += r_filter_s;
+    // l_rank[0] += l_s;
+    // r_rank[0] += r_s;
+    __sync_fetch_and_add(l_filter_rank, l_filter_s);
+    __sync_fetch_and_add(r_filter_rank, r_filter_s);
+    __sync_fetch_and_add(l_rank, l_s);
+    __sync_fetch_and_add(r_rank, l_s);
+
+    if (l_filter_s < 10) {
+      // l_filter_tot[label] += 1;
+      __sync_fetch_and_add(l_filter_tot+label, 1);
+    }
+    if (l_s < 10) {
+      // l_tot[label] += 1;
+      __sync_fetch_and_add(l_tot+label, 1);
+    }
+    if (r_filter_s < 10) {
+      // r_filter_tot[label] += 1;
+      __sync_fetch_and_add(r_filter_tot+label, 1);
+    }
+    if (r_s < 10) {
+      // r_tot[label] += 1;
+      __sync_fetch_and_add(r_tot+label, 1);
+    }
+    // l_filter_rank[label] += l_filter_s;
+    // r_filter_rank[label] += r_filter_s;
+    // l_rank[label] += l_s;
+    // r_rank[label] += r_s;
+    __sync_fetch_and_add(l_filter_rank+label, l_filter_s);
+    __sync_fetch_and_add(r_filter_rank+label, r_filter_s);
+    __sync_fetch_and_add(l_rank+label, l_s);
+    __sync_fetch_and_add(r_rank+label, l_s); 
+
+    if (l_filter_s_constrain < 10) {
+      // l_filter_tot[5] += 1;
+      __sync_fetch_and_add(l_filter_tot+5, 1);
+    }
+    if (l_s_constrain < 10) {
+      // l_tot[5] += 1;
+      __sync_fetch_and_add(l_tot+5, 1);
+    }
+    if (r_filter_s_constrain < 10) {
+      // r_filter_tot[5] += 1;
+      __sync_fetch_and_add(r_filter_tot+5, 1);
+    }
+    if (r_s_constrain < 10) {
+      // r_tot[5] += 1;
+      __sync_fetch_and_add(r_tot+5, 1);
+    }
+    // l_filter_rank[5] += l_filter_s_constrain;
+    // r_filter_rank[5] += r_filter_s_constrain;
+    // l_rank[5] += l_s_constrain;
+    // r_rank[5] += r_s_constrain;
+    __sync_fetch_and_add(l_filter_rank+5, l_filter_s_constrain);
+    __sync_fetch_and_add(r_filter_rank+5, r_filter_s_constrain);
+    __sync_fetch_and_add(l_rank+5, l_s_constrain);
+    __sync_fetch_and_add(r_rank+5, l_s_constrain); 
+  }
+}
+
+void test() {
+  struct timeval stt; gettimeofday(&stt, NULL);
+  printf("START TESTING ...\n");
+
+  for (int i = 0; i < threads; i++) {
+    testMode(i);
+  }
+  for (int i = 0; i <= 0; i++) {
+    printf("left %f %f\n", l_rank[i] / testTripleNum, l_tot[i] / testTripleNum);
+    printf("left(filter) %f %f\n", l_filter_rank[i] / testTripleNum, l_filter_tot[i] / testTripleNum);
+    printf("right %f %f\n", r_rank[i] / testTripleNum, r_tot[i] / testTripleNum);
+    printf("right(filter) %f %f\n", r_filter_rank[i]  / testTripleNum, r_filter_tot[i] / testTripleNum);
+	}
+  for (int i = 5; i <= 5; i++) {
+    printf("left %f %f\n", l_rank[i] / testTripleNum, l_tot[i] / testTripleNum);
+    printf("left(filter) %f %f\n", l_filter_rank[i] / testTripleNum, l_filter_tot[i] / testTripleNum);
+    printf("right %f %f\n", r_rank[i] / testTripleNum, r_tot[i] / testTripleNum);
+    printf("right(filter) %f %f\n", r_filter_rank[i] / testTripleNum, r_filter_tot[i] / testTripleNum);
+  }
+	for (int i = 1; i <= 4; i++) {
+    printf("left %f %f\n", l_rank[i] / nnTotal[i], l_tot[i] / nnTotal[i]);
+    printf("left(filter) %f %f\n", l_filter_rank[i] / nnTotal[i], l_filter_tot[i] / nnTotal[i]);
+    printf("right %f %f\n", r_rank[i] / nnTotal[i], r_tot[i] / nnTotal[i]);
+    printf("right(filter) %f %f\n", r_filter_rank[i] / nnTotal[i], r_filter_tot[i] / nnTotal[i]);
+	}
+
+  struct timeval end; gettimeofday(&end, NULL);
+  printf("END TESTING. TEST duration: %.3fs\n", (end.tv_sec-stt.tv_sec) + (end.tv_usec-stt.tv_usec)/(1e6));
+}
+
+void testFinish() {
+  free(vecBuf);
+  free(headBegins);
+  free(tripleList);
 }
 
 #endif // !PARTRANSE_H

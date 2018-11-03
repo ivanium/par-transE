@@ -150,8 +150,9 @@ void show_args() {
 
 int main(int argc, char *argv[]) {
   parseCmdArgs(argc, argv);
-  train_init();
-  train();
-  finish();
+  testInit();
+  load();
+  test();
+  testFinish();
   return 0;
 }
