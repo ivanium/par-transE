@@ -66,9 +66,10 @@ int threads = 32;
 // Arguments
 intT loadBinaryFlag = 0;
 intT outBinaryFlag = 0;
-string inputBaseDir = "./";
-string outputBaseDir = "";
+string inputDir = "./";
+string outputDir = "";
 string loadDir = "";
+string note = "";
 
 // Buffer
 Triple *trainHead, *trainTail, *trainList;
@@ -99,11 +100,11 @@ void trainInit() {
   FILE *fin;
   intT tmp;
 
-  fin = fopen((inputBaseDir + "relation2id.txt").c_str(), "r");
+  fin = fopen((inputDir + "relation2id.txt").c_str(), "r");
   tmp = fscanf(fin, "%d", &relationNum);
   fclose(fin);
 
-  fin = fopen((inputBaseDir + "entity2id.txt").c_str(), "r");
+  fin = fopen((inputDir + "entity2id.txt").c_str(), "r");
   tmp = fscanf(fin, "%d", &entityNum);
   fclose(fin);
 
@@ -122,7 +123,7 @@ void trainInit() {
   headMeanList = (floatT *) malloc(relationNum * 2 * sizeof(floatT));
   tailMeanList = headMeanList + relationNum;
 
-  fin = fopen((inputBaseDir + "train2id.txt").c_str(), "r");
+  fin = fopen((inputDir + "train2id.txt").c_str(), "r");
   tmp = fscanf(fin, "%d", &tripleNum);
   trainList = (Triple *) malloc(tripleNum*3 * sizeof(Triple));
   trainHead = trainList + tripleNum;
@@ -258,6 +259,7 @@ inline void tripleTrain(floatT *h1Vec, floatT *t1Vec, floatT *rVec, floatT *jVec
   floatT sum1 = tripleDiff(h1Vec, t1Vec, rVec);
   floatT sum2 = tripleDiff(h2Vec, t2Vec, rVec);
   if (sum1 + margin > sum2) {
+    #pragma omp atomic
     res += margin + sum1 - sum2;
     gradiant(h1Vec, t1Vec, rVec, jVec, jHeadFlag);
   }
@@ -476,10 +478,9 @@ intT testTripleNum, trainTripleNum, validTripleNum;
 intT headType[1000000], tailType[1000000];
 intT nnTotal[5];
 LabelTriple *tripleList, *testList;
-intT testBlockSize;
 
-floatT l_filter_tot[6], l_filter_rank[6], l_tot[6], l_rank[6];
-floatT r_filter_tot[6], r_filter_rank[6], r_tot[6], r_rank[6];
+intT l_filter_tot[6], l_filter_rank[6], l_tot[6], l_rank[6];
+intT r_filter_tot[6], r_filter_rank[6], r_tot[6], r_rank[6];
 
 void testInit() {
   struct timeval stt; gettimeofday(&stt, NULL);
@@ -590,9 +591,8 @@ bool find(intT h, intT t, intT r) {
 }
 
 void testMode(int tid) {
-  intT begin = tid * testBlockSize;
-  intT end = tid == threads-1 ? testTripleNum : begin + testBlockSize;
-  for (intT i = begin; i < end; i++) {
+  #pragma omp parallel for
+  for (intT i = 0; i < testTripleNum; i++) {
     intT h = testList[i].h, t = testList[i].t, r = testList[i].r, label = testList[i].label;
     floatT *hVec = eVecBuf + h * dimension;
     floatT *tVec = eVecBuf + t * dimension;
@@ -638,80 +638,33 @@ void testMode(int tid) {
         }
       }
     }
-    if (l_filter_s < 10) {
-      // l_filter_tot[0] += 1;
-      __sync_fetch_and_add(l_filter_tot, 1);
-    }
-    if (l_s < 10) {
-      // l_tot[0] += 1;
-      __sync_fetch_and_add(l_tot, 1);
-    }
-    if (r_filter_s < 10) {
-      // r_filter_tot[0] += 1;
-      __sync_fetch_and_add(r_filter_tot, 1);
-    }
-    if (r_s < 10) {
-      // r_tot[0] += 1;
-      __sync_fetch_and_add(r_tot, 1);
-    }
-    // l_filter_rank[0] += l_filter_s;
-    // r_filter_rank[0] += r_filter_s;
-    // l_rank[0] += l_s;
-    // r_rank[0] += r_s;
-    __sync_fetch_and_add(l_filter_rank, l_filter_s);
-    __sync_fetch_and_add(r_filter_rank, r_filter_s);
-    __sync_fetch_and_add(l_rank, l_s);
-    __sync_fetch_and_add(r_rank, l_s);
+    if (l_filter_s < 10) { __sync_fetch_and_add(l_filter_tot+0, 1); }
+    if (l_s < 10)        { __sync_fetch_and_add(l_tot+0, 1); }
+    if (r_filter_s < 10) { __sync_fetch_and_add(r_filter_tot+0, 1); }
+    if (r_s < 10)        { __sync_fetch_and_add(r_tot+0, 1); }
+    
+    __sync_fetch_and_add(l_filter_rank+0, l_filter_s);
+    __sync_fetch_and_add(r_filter_rank+0, r_filter_s);
+    __sync_fetch_and_add(l_rank+0, l_s);
+    __sync_fetch_and_add(r_rank+0, r_s);
 
-    if (l_filter_s < 10) {
-      // l_filter_tot[label] += 1;
-      __sync_fetch_and_add(l_filter_tot+label, 1);
-    }
-    if (l_s < 10) {
-      // l_tot[label] += 1;
-      __sync_fetch_and_add(l_tot+label, 1);
-    }
-    if (r_filter_s < 10) {
-      // r_filter_tot[label] += 1;
-      __sync_fetch_and_add(r_filter_tot+label, 1);
-    }
-    if (r_s < 10) {
-      // r_tot[label] += 1;
-      __sync_fetch_and_add(r_tot+label, 1);
-    }
-    // l_filter_rank[label] += l_filter_s;
-    // r_filter_rank[label] += r_filter_s;
-    // l_rank[label] += l_s;
-    // r_rank[label] += r_s;
+    if (l_filter_s < 10) { __sync_fetch_and_add(l_filter_tot+label, 1); }
+    if (l_s < 10)        { __sync_fetch_and_add(l_tot+label, 1); }
+    if (r_filter_s < 10) { __sync_fetch_and_add(r_filter_tot+label, 1); }
+    if (r_s < 10)        { __sync_fetch_and_add(r_tot+label, 1); }
     __sync_fetch_and_add(l_filter_rank+label, l_filter_s);
     __sync_fetch_and_add(r_filter_rank+label, r_filter_s);
     __sync_fetch_and_add(l_rank+label, l_s);
-    __sync_fetch_and_add(r_rank+label, l_s); 
+    __sync_fetch_and_add(r_rank+label, r_s); 
 
-    if (l_filter_s_constrain < 10) {
-      // l_filter_tot[5] += 1;
-      __sync_fetch_and_add(l_filter_tot+5, 1);
-    }
-    if (l_s_constrain < 10) {
-      // l_tot[5] += 1;
-      __sync_fetch_and_add(l_tot+5, 1);
-    }
-    if (r_filter_s_constrain < 10) {
-      // r_filter_tot[5] += 1;
-      __sync_fetch_and_add(r_filter_tot+5, 1);
-    }
-    if (r_s_constrain < 10) {
-      // r_tot[5] += 1;
-      __sync_fetch_and_add(r_tot+5, 1);
-    }
-    // l_filter_rank[5] += l_filter_s_constrain;
-    // r_filter_rank[5] += r_filter_s_constrain;
-    // l_rank[5] += l_s_constrain;
-    // r_rank[5] += r_s_constrain;
+    if (l_filter_s_constrain < 10) { __sync_fetch_and_add(l_filter_tot+5, 1); }
+    if (l_s_constrain < 10)        { __sync_fetch_and_add(l_tot+5, 1); }
+    if (r_filter_s_constrain < 10) { __sync_fetch_and_add(r_filter_tot+5, 1); }
+    if (r_s_constrain < 10)        { __sync_fetch_and_add(r_tot+5, 1); }
     __sync_fetch_and_add(l_filter_rank+5, l_filter_s_constrain);
     __sync_fetch_and_add(r_filter_rank+5, r_filter_s_constrain);
     __sync_fetch_and_add(l_rank+5, l_s_constrain);
-    __sync_fetch_and_add(r_rank+5, l_s_constrain); 
+    __sync_fetch_and_add(r_rank+5, r_s_constrain); 
   }
 }
 
@@ -719,26 +672,25 @@ void test() {
   struct timeval stt; gettimeofday(&stt, NULL);
   printf("START TESTING ...\n");
 
-  for (int i = 0; i < threads; i++) {
-    testMode(i);
-  }
+  omp_set_num_threads(threads);
+  testMode(0);
   for (int i = 0; i <= 0; i++) {
-    printf("left %f %f\n", l_rank[i] / testTripleNum, l_tot[i] / testTripleNum);
-    printf("left(filter) %f %f\n", l_filter_rank[i] / testTripleNum, l_filter_tot[i] / testTripleNum);
-    printf("right %f %f\n", r_rank[i] / testTripleNum, r_tot[i] / testTripleNum);
-    printf("right(filter) %f %f\n", r_filter_rank[i]  / testTripleNum, r_filter_tot[i] / testTripleNum);
+    printf("left %f %f\n", 1.0*l_rank[i] / testTripleNum, 1.0*l_tot[i] / testTripleNum);
+    printf("left(filter) %f %f\n", 1.0*l_filter_rank[i] / testTripleNum, 1.0*l_filter_tot[i] / testTripleNum);
+    printf("right %f %f\n", 1.0*r_rank[i] / testTripleNum, 1.0*r_tot[i] / testTripleNum);
+    printf("right(filter) %f %f\n", 1.0*r_filter_rank[i] / testTripleNum, 1.0*r_filter_tot[i] / testTripleNum);
 	}
   for (int i = 5; i <= 5; i++) {
-    printf("left %f %f\n", l_rank[i] / testTripleNum, l_tot[i] / testTripleNum);
-    printf("left(filter) %f %f\n", l_filter_rank[i] / testTripleNum, l_filter_tot[i] / testTripleNum);
-    printf("right %f %f\n", r_rank[i] / testTripleNum, r_tot[i] / testTripleNum);
-    printf("right(filter) %f %f\n", r_filter_rank[i] / testTripleNum, r_filter_tot[i] / testTripleNum);
+    printf("left %f %f\n", 1.0*l_rank[i] / testTripleNum, 1.0*l_tot[i] / testTripleNum);
+    printf("left(filter) %f %f\n", 1.0*l_filter_rank[i] / testTripleNum, 1.0*l_filter_tot[i] / testTripleNum);
+    printf("right %f %f\n", 1.0*r_rank[i] / testTripleNum, 1.0*r_tot[i] / testTripleNum);
+    printf("right(filter) %f %f\n", 1.0*r_filter_rank[i] / testTripleNum, 1.0*r_filter_tot[i] / testTripleNum);
   }
 	for (int i = 1; i <= 4; i++) {
-    printf("left %f %f\n", l_rank[i] / nnTotal[i], l_tot[i] / nnTotal[i]);
-    printf("left(filter) %f %f\n", l_filter_rank[i] / nnTotal[i], l_filter_tot[i] / nnTotal[i]);
-    printf("right %f %f\n", r_rank[i] / nnTotal[i], r_tot[i] / nnTotal[i]);
-    printf("right(filter) %f %f\n", r_filter_rank[i] / nnTotal[i], r_filter_tot[i] / nnTotal[i]);
+    printf("left %f %f\n", 1.0*l_rank[i] / nnTotal[i], 1.0*l_tot[i] / nnTotal[i]);
+    printf("left(filter) %f %f\n", 1.0*l_filter_rank[i] / nnTotal[i], 1.0*l_filter_tot[i] / nnTotal[i]);
+    printf("right %f %f\n", 1.0*r_rank[i] / nnTotal[i], 1.0*r_tot[i] / nnTotal[i]);
+    printf("right(filter) %f %f\n", 1.0*r_filter_rank[i] / nnTotal[i], 1.0*r_filter_tot[i] / nnTotal[i]);
 	}
 
   struct timeval end; gettimeofday(&end, NULL);
@@ -751,4 +703,4 @@ void testFinish() {
   free(tripleList);
 }
 
-#endif // !PARTRANSE_H
+#endif // !PARTRANSE_Hd

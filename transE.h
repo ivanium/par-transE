@@ -476,8 +476,8 @@ intT headType[1000000], tailType[1000000];
 intT nnTotal[5];
 LabelTriple *tripleList, *testList;
 
-floatT l_filter_tot[6], l_filter_rank[6], l_tot[6], l_rank[6];
-floatT r_filter_tot[6], r_filter_rank[6], r_tot[6], r_rank[6];
+intT l_filter_tot[6], l_filter_rank[6], l_tot[6], l_rank[6];
+intT r_filter_tot[6], r_filter_rank[6], r_tot[6], r_rank[6];
 
 void testInit() {
   struct timeval stt; gettimeofday(&stt, NULL);
@@ -669,22 +669,22 @@ void test() {
 
   testMode(0);
   for (int i = 0; i <= 0; i++) {
-    printf("left %f %f\n", l_rank[i] / testTripleNum, l_tot[i] / testTripleNum);
-    printf("left(filter) %f %f\n", l_filter_rank[i] / testTripleNum, l_filter_tot[i] / testTripleNum);
-    printf("right %f %f\n", r_rank[i] / testTripleNum, r_tot[i] / testTripleNum);
-    printf("right(filter) %f %f\n", r_filter_rank[i] / testTripleNum, r_filter_tot[i] / testTripleNum);
+    printf("left %f %f\n", 1.0*l_rank[i] / testTripleNum, 1.0*l_tot[i] / testTripleNum);
+    printf("left(filter) %f %f\n", 1.0*l_filter_rank[i] / testTripleNum, 1.0*l_filter_tot[i] / testTripleNum);
+    printf("right %f %f\n", 1.0*r_rank[i] / testTripleNum, 1.0*r_tot[i] / testTripleNum);
+    printf("right(filter) %f %f\n", 1.0*r_filter_rank[i] / testTripleNum, 1.0*r_filter_tot[i] / testTripleNum);
 	}
   for (int i = 5; i <= 5; i++) {
-    printf("left %f %f\n", l_rank[i] / testTripleNum, l_tot[i] / testTripleNum);
-    printf("left(filter) %f %f\n", l_filter_rank[i] / testTripleNum, l_filter_tot[i] / testTripleNum);
-    printf("right %f %f\n", r_rank[i] / testTripleNum, r_tot[i] / testTripleNum);
-    printf("right(filter) %f %f\n", r_filter_rank[i] / testTripleNum, r_filter_tot[i] / testTripleNum);
+    printf("left %f %f\n", 1.0*l_rank[i] / testTripleNum, 1.0*l_tot[i] / testTripleNum);
+    printf("left(filter) %f %f\n", 1.0*l_filter_rank[i] / testTripleNum, 1.0*l_filter_tot[i] / testTripleNum);
+    printf("right %f %f\n", 1.0*r_rank[i] / testTripleNum, 1.0*r_tot[i] / testTripleNum);
+    printf("right(filter) %f %f\n", 1.0*r_filter_rank[i] / testTripleNum, 1.0*r_filter_tot[i] / testTripleNum);
   }
 	for (int i = 1; i <= 4; i++) {
-    printf("left %f %f\n", l_rank[i] / nnTotal[i], l_tot[i] / nnTotal[i]);
-    printf("left(filter) %f %f\n", l_filter_rank[i] / nnTotal[i], l_filter_tot[i] / nnTotal[i]);
-    printf("right %f %f\n", r_rank[i] / nnTotal[i], r_tot[i] / nnTotal[i]);
-    printf("right(filter) %f %f\n", r_filter_rank[i] / nnTotal[i], r_filter_tot[i] / nnTotal[i]);
+    printf("left %f %f\n", 1.0*l_rank[i] / nnTotal[i], 1.0*l_tot[i] / nnTotal[i]);
+    printf("left(filter) %f %f\n", 1.0*l_filter_rank[i] / nnTotal[i], 1.0*l_filter_tot[i] / nnTotal[i]);
+    printf("right %f %f\n", 1.0*r_rank[i] / nnTotal[i], 1.0*r_tot[i] / nnTotal[i]);
+    printf("right(filter) %f %f\n", 1.0*r_filter_rank[i] / nnTotal[i], 1.0*r_filter_tot[i] / nnTotal[i]);
 	}
 
   struct timeval end; gettimeofday(&end, NULL);

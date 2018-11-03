@@ -79,6 +79,8 @@ void show_args() {
   printf("output-bin: %d\n", outBinaryFlag);
   printf("load: %s\n", loadDir.c_str());
   printf("load-bin: %d\n", loadBinaryFlag);
+  printf("note: %s\n", note.c_str());
+  printf("threads: %d\n", threads);
   printf("epochs: %d\n", epochs);
   printf("nbatchs: %d\n", nbatches);
   printf("alpha: %.3f\n", alpha);
