@@ -1,5 +1,5 @@
-#ifndef PARTRANSE_H
-#define PARTRANSE_H
+#ifndef MPITRANSE_H
+#define MPITRANSE_H
 
 #include <cstdio>
 #include <cstdlib>
@@ -12,12 +12,12 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/time.h>
-#include <omp.h>
+
+#include <mpi.h>
 
 #include "parallel.h"
 #include "util.h"
 
-using namespace std;
 
 struct Triple {
   intT h, r, t;
@@ -61,15 +61,20 @@ intT dimension= 100;
 intT bernFlag = 0;
 intT epochs   = 1000;
 intT nbatches = 1;
-int threads   = 32;
+
+//MPI related variables
+int partitions, partitionId;
+intT rChunkNum, eChunkNum;
+intT rLocalNum, eLocalNum;
+MPI_Win vecWin;
 
 // Arguments
 intT loadBinaryFlag = 0;
 intT outBinaryFlag = 0;
-string inputDir = "./";
-string outputDir = "";
-string loadDir = "";
-string note = "";
+std::string inputDir = "./";
+std::string outputDir = "";
+std::string loadDir = "";
+std::string note = "";
 
 // Buffer
 Triple *trainHead, *trainTail, *trainList;
@@ -82,20 +87,42 @@ floatT *headMeanList, *tailMeanList;
 
 // Global Variable
 floatT res = 0.0;
+floatT globalRes = 0.0;
 intT batchSize;
-intT blockSize;
-ULL *seed;
+ULL seed;
 
 
+// MPI Communication
+inline void getEntityVec(intT e, floatT *eBuf) {
+	int rank = std::min(e / eChunkNum, partitions-1);
+  int rTargetNum = rank == partitions-1 ? (relationNum - rank*rChunkNum) : rChunkNum;
+	int offset = rTargetNum + e - rank * eChunkNum;
+	MPI_Get(eBuf, dimension, MPI_FLOAT, rank, offset*dimension, dimension, MPI_FLOAT, vecWin);
+}
+inline void putEntityVec(intT e, floatT *eBuf) {
+	int rank = std::min(e / eChunkNum, partitions-1);
+  int rTargetNum = rank == partitions-1 ? (relationNum - rank*rChunkNum) : rChunkNum;
+	int offset = rTargetNum + e - rank * eChunkNum;
+	MPI_Put(eBuf, dimension, MPI_FLOAT, rank, offset*dimension, dimension, MPI_FLOAT, vecWin);
+}
+
+inline void getRelationVec(intT r, floatT *rBuf) {
+	int rank = std::min(r / rChunkNum, partitions-1);
+	int offset = r - rank * rChunkNum;
+	MPI_Get(rBuf, dimension, MPI_FLOAT, rank, offset*dimension, dimension, MPI_FLOAT, vecWin);
+}
+inline void putRelationVec(intT r, floatT *rBuf) {
+	int rank = std::min(r / rChunkNum, partitions-1);
+	int offset = r - rank * rChunkNum;
+	MPI_Put(rBuf, dimension, MPI_FLOAT, rank, offset*dimension, dimension, MPI_FLOAT, vecWin);
+}
+
+// TRAIN
 void trainInit() {
   struct timeval stt; gettimeofday(&stt, NULL);
-  printf("START INITIALING...\n");
+  printf("START TRAIN INITIALIZATION ...\n");
 
-  omp_set_num_threads(threads);
-  seed = (ULL *) malloc(threads * sizeof(ULL));
-  for (int i = 1; i <= threads; i++) {
-    seed[i] = i;
-  }
+  seed = (ULL)partitionId;
 
   FILE *fin;
   intT tmp;
@@ -109,9 +136,20 @@ void trainInit() {
   fclose(fin);
 
   // setup buffer variables
-  vecBuf = (floatT *) malloc((entityNum + relationNum) * dimension * sizeof(floatT));
+  rChunkNum = relationNum / partitions;
+  eChunkNum = entityNum / partitions;
+  if (partitionId == partitions-1) {
+    rLocalNum = relationNum - partitionId*rChunkNum;
+    eLocalNum = entityNum   - partitionId*eChunkNum;
+  } else {
+    rLocalNum = rChunkNum;
+    eLocalNum = eChunkNum;
+  }
+
+  MPI_Alloc_mem((eLocalNum+rLocalNum) * dimension * sizeof(floatT), MPI_INFO_NULL, &vecBuf);
   rVecBuf = vecBuf;
-  eVecBuf = vecBuf + relationNum * dimension;
+  eVecBuf = vecBuf + rLocalNum * dimension;
+  MPI_Win_create(vecBuf, (eLocalNum+rLocalNum) * dimension * sizeof(floatT), sizeof(floatT), MPI_INFO_NULL, MPI_COMM_WORLD, &vecWin);
 
   intT *rFreqList = (intT *) malloc(relationNum * sizeof(intT));
 
@@ -120,7 +158,7 @@ void trainInit() {
   tailBegins = headEnds   + entityNum;
   tailEnds   = tailBegins + entityNum;
 
-  headMeanList = (floatT *) malloc(relationNum * 2 * sizeof(floatT));
+  headMeanList = (floatT *) malloc(relationNum*2 * sizeof(floatT));
   tailMeanList = headMeanList + relationNum;
 
   fin = fopen((inputDir + "train2id.txt").c_str(), "r");
@@ -130,16 +168,12 @@ void trainInit() {
   trainTail = trainHead + tripleNum;
 
   // Initialize vectors and calc stats
-  #pragma omp parallel for
   for (intT i = 0; i < relationNum; i++) {
-    ULL seed = i;
     for (int ii = 0; ii < dimension; ii++) {
       rVecBuf[i*dimension + ii] = randn(&seed, 0.0, 1.0/dimension, -6/sqrt(dimension), 6/sqrt(dimension));
     }
   }
-  #pragma omp parallel for
   for (intT i = 0; i < entityNum; i++) {
-    ULL seed = i;
     for (int ii = 0; ii < dimension; ii++) {
       eVecBuf[i*dimension + ii] = randn(&seed, 0.0, 1.0/dimension, -6/sqrt(dimension), 6/sqrt(dimension));
     }
@@ -148,32 +182,27 @@ void trainInit() {
 
   for (intT i = 0; i < tripleNum; i++) {
     tmp = fscanf(fin, "%d %d %d", &trainList[i].h, &trainList[i].t, &trainList[i].r);
+    trainHead[i] = trainList[i];
+    trainTail[i] = trainList[i];
   }
   fclose(fin);
-  memcpy(trainHead, trainList, tripleNum * sizeof(Triple));
-  memcpy(trainTail, trainList, tripleNum * sizeof(Triple));
 
-  sort(trainHead, trainHead + tripleNum, cmp_head());
-  sort(trainTail, trainTail + tripleNum, cmp_tail());
+  std::sort(trainHead, trainHead + tripleNum, cmp_head());
+  std::sort(trainTail, trainTail + tripleNum, cmp_tail());
 
-  #pragma omp parallel for
   for (intT i = 0; i < tripleNum; i++) {
-    // rFreqList[trainHead[i].r]++;
-    __sync_fetch_and_add(rFreqList + trainHead[i].r, 1);
+    rFreqList[trainHead[i].r]++;
   }
 
   headBegins[0] = tailBegins[0] = 0;
   memset(headEnds, -1, sizeof(intT) * entityNum);
   memset(tailEnds, -1, sizeof(intT) * entityNum);
 
-  #pragma omp parallel for
   for (intT i = 1; i < tripleNum; i++) {
     if (trainHead[i-1].h != trainHead[i].h) {
       headEnds[trainHead[i-1].h] = i-1;
       headBegins[trainHead[i].h] = i;
     }
-  // }
-  // for (intT i = 1; i < tripleNum; i++) {
     if (trainTail[i-1].t != trainTail[i].t) {
       tailEnds[trainTail[i-1].t] = i-1;
       tailBegins[trainTail[i].t] = i;
@@ -182,7 +211,6 @@ void trainInit() {
   headEnds[trainHead[tripleNum -1].h] = tripleNum - 1;
   tailEnds[trainTail[tripleNum -1].t] = tripleNum - 1;
 
-  #pragma omp parallel for
   for (intT i = 0; i < entityNum; i++) {
     for (intT j = headBegins[i] + 1; j <= headEnds[i]; j++)
       if (trainHead[j].r != trainHead[j - 1].r)
@@ -196,7 +224,6 @@ void trainInit() {
       tailMeanList[trainTail[tailBegins[i]].r] += 1.0;
   }
 
-  #pragma omp parallel for
   for (intT i = 0; i < relationNum; i++) {
     headMeanList[i] = rFreqList[i] / headMeanList[i];
     tailMeanList[i] = rFreqList[i] / tailMeanList[i];
@@ -204,15 +231,15 @@ void trainInit() {
   // cleanup temp buffer
   free (rFreqList);
   struct timeval end; gettimeofday(&end, NULL);
-  printf("FINISH INIT, duration: %.3fs\n", (end.tv_sec-stt.tv_sec) + (end.tv_usec-stt.tv_usec)/1e6);
+  printf("FINISH TRAIN INITIALIZATION, INIT duration: %.3fs\n", (end.tv_sec-stt.tv_sec) + (end.tv_usec-stt.tv_usec)/1e6);
 }
 
 void trainFinish() {
-  free (vecBuf);
+  MPI_Free_mem(vecBuf);
+  MPI_Win_free(&vecWin);
   free (headBegins);
   free (headMeanList);
   free (trainList);
-  free (seed);
 }
 
 inline floatT tripleDiff(floatT *hVec, floatT *tVec, floatT *rVec) {
@@ -259,7 +286,6 @@ inline void tripleTrain(floatT *h1Vec, floatT *t1Vec, floatT *rVec, floatT *jVec
   floatT sum1 = tripleDiff(h1Vec, t1Vec, rVec);
   floatT sum2 = tripleDiff(h2Vec, t2Vec, rVec);
   if (sum1 + margin > sum2) {
-    #pragma omp atomic
     res += margin + sum1 - sum2;
     gradiant(h1Vec, t1Vec, rVec, jVec, jHeadFlag);
   }
@@ -337,51 +363,85 @@ inline intT getNegHead(ULL *id, intT t, intT r) {
   return tmp + lef - ll + 1;
 }
 
-void train_thread(int tid) {
-  intT begin = tid*blockSize;
-  intT end   = tid == threads-1 ? batchSize : begin + blockSize;
-  for (intT k = begin; k < end; k++) {
-    intT pr, i, j;
-    floatT *hVec, *tVec, *rVec, *jVec;
-    // i = rand_max(&seed[tid], tripleNum);
-    i = k;
+void train_thread() {
+  floatT *hVec, *tVec, *rVec, *jVec;
+  floatT *tmpVecBuf = (floatT *) malloc(4 * dimension * sizeof(floatT));
 
-    pr = bernFlag ? 1000 * headMeanList[trainList[i].r] / (headMeanList[trainList[i].r] + tailMeanList[trainList[i].r])
+  for (intT pr, i, j, k = batchSize; k >= 0; k--) {
+    i = rand_max(&seed, tripleNum);
+
+    intT hIdx = trainList[i].h; intT tIdx = trainList[i].t; intT rIdx = trainList[i].r;
+
+    pr = bernFlag ? 1000 * headMeanList[rIdx] / (headMeanList[rIdx] + tailMeanList[rIdx])
                   : 500;
 
-    bool jHeadFlag = !(rand_max(&seed[tid], 1000) < pr);
-    j = jHeadFlag ? getNegHead(&seed[tid], trainList[i].t, trainList[i].r)
-                  : getNegTail(&seed[tid], trainList[i].h, trainList[i].r);
+    bool jHeadFlag = !(rand_max(&seed, 1000) < pr);
+    j = jHeadFlag ? getNegHead(&seed, tIdx, rIdx)
+                  : getNegTail(&seed, hIdx, rIdx);
 
-    hVec = eVecBuf + dimension * trainList[i].h;
-    tVec = eVecBuf + dimension * trainList[i].t;
-    rVec = rVecBuf + dimension * trainList[i].r;
-    jVec = eVecBuf + dimension * j;
+    hVec = tmpVecBuf;
+    if (tIdx == hIdx) { tVec = hVec; } else { tVec = hVec + dimension; }
+    if (j == hIdx) { jVec = hVec; } else if (j == tIdx) { jVec = tVec; } else { jVec = tVec + dimension; }
+    rVec = jVec + dimension;
+
+    getEntityVec(hIdx, hVec); getEntityVec(tIdx, tVec); getEntityVec(j, jVec);
+    getRelationVec(rIdx, rVec);
 
     tripleTrain(hVec, tVec, rVec, jVec, jHeadFlag);
     norm(hVec, dimension); norm(tVec, dimension); norm(rVec, dimension); norm(jVec, dimension);
+
+    putEntityVec(hIdx, hVec); putEntityVec(tIdx, tVec); putEntityVec(j, jVec);
+    putRelationVec(rIdx, rVec);
   }
 }
 
 void train() {
   struct timeval stt; gettimeofday(&stt, NULL);
-  printf("START TRAINING...\n");
+  printf("START TRAINING ...\n");
 
   batchSize = tripleNum / nbatches;
-  blockSize = batchSize / threads;
+  floatT *hVec, *tVec, *rVec, *jVec;
+  floatT *tmpVecBuf = (floatT *) malloc(4 * dimension * sizeof(floatT));
+
+  MPI_Win_fence(0, vecWin);
   for (intT e = 0; e < epochs; e++) {
     res = 0.0;
     for (intT batch = 0; batch < nbatches; batch++) {
-      #pragma omp parallel for reduction(+:res)
-      for (int i = 0; i < threads; i++) {
-        train_thread(i);
+      for (intT pr, i, j, k = 0; k <= batchSize; k++) {
+        i = rand_max(&seed, tripleNum);
+        // i = k;
+
+        intT hIdx = trainList[i].h; intT tIdx = trainList[i].t; intT rIdx = trainList[i].r;
+
+        pr = bernFlag ? 1000 * headMeanList[rIdx] / (headMeanList[rIdx] + tailMeanList[rIdx])
+                      : 500;
+
+        bool jHeadFlag = rand_max(&seed, 1000) >= pr;
+        j = jHeadFlag ? getNegHead(&seed, tIdx, rIdx)
+                      : getNegTail(&seed, hIdx, rIdx);
+
+        hVec = tmpVecBuf;
+        if (tIdx == hIdx) { tVec = hVec; } else { tVec = hVec + dimension; }
+        if (j == hIdx) { jVec = hVec; } else if (j == tIdx) { jVec = tVec; } else { jVec = tVec + dimension; }
+        rVec = jVec + dimension;
+
+        getEntityVec(hIdx, hVec); getEntityVec(tIdx, tVec); getEntityVec(j, jVec);
+        getRelationVec(rIdx, rVec);
+
+        tripleTrain(hVec, tVec, rVec, jVec, jHeadFlag);
+        norm(hVec, dimension); norm(tVec, dimension); norm(rVec, dimension); norm(jVec, dimension);
+
+        putEntityVec(hIdx, hVec); putEntityVec(tIdx, tVec); putEntityVec(j, jVec);
+        putRelationVec(rIdx, rVec);
       }
     }
-    printf("epoch %d %f\n", e, res);
+    MPI_Allreduce(&res, &globalRes, 1, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+    printf("epoch %d, local loss: %.3f, global loss: %.3f\n", e, res, globalRes);
   }
+  MPI_Win_fence(0, vecWin);
 
   struct timeval end; gettimeofday(&end, NULL);
-  printf("END TRAINING. Duration: %.3fs\n", (end.tv_sec-stt.tv_sec) + (end.tv_usec-stt.tv_usec)/(1e6));
+  printf("END TRAINING. TRAIN duration: %.3fs\n", (end.tv_sec-stt.tv_sec) + (end.tv_usec-stt.tv_usec)/(1e6));
 }
 
 
@@ -475,7 +535,7 @@ void output() {
 
 // TEST
 intT testTripleNum, trainTripleNum, validTripleNum;
-intT *headType, *tailType;
+intT headType[1000000], tailType[1000000];
 intT nnTotal[5];
 LabelTriple *tripleList, *testList;
 
@@ -516,9 +576,6 @@ void testInit() {
   tripleList = (LabelTriple *) malloc(tripleNum * dimension * sizeof(LabelTriple));
   testList = (LabelTriple *) malloc(testTripleNum * dimension * sizeof(LabelTriple));
 
-  headType = (intT *) malloc(tripleNum * 2 * sizeof(intT));
-  tailType = headType + tripleNum;
-
   intT label, h, t, r;
   for (intT i = 0; i < testTripleNum; i++) {
     tmp = fscanf(f_kb1, "%d %d %d %d", &label, &h, &t, &r);
@@ -542,7 +599,7 @@ void testInit() {
   fclose(f_kb2);
   fclose(f_kb3);
 
-  sort(tripleList, tripleList + tripleNum, cmp_head());
+  std::sort(tripleList, tripleList + tripleNum, cmp_head());
 
   intT hTypeOffset = 0, tTypeOffset = 0;
   FILE* f_type = fopen((inputDir + "type_constrain.txt").c_str(),"r");
@@ -556,7 +613,7 @@ void testInit() {
       hTypeOffset++;
     }
     headEnds[rel] = hTypeOffset;
-    sort(headType + headBegins[rel], headType + headEnds[rel]);
+    std::sort(headType + headBegins[rel], headType + headEnds[rel]);
 
     tmp = fscanf(f_type, "%d %d", &rel, &tot);
     tailBegins[rel] = tTypeOffset;
@@ -565,7 +622,7 @@ void testInit() {
       tTypeOffset++;
     }
     tailEnds[rel] = tTypeOffset;
-    sort(tailType + tailBegins[rel], tailType + tailEnds[rel]);
+    std::sort(tailType + tailBegins[rel], tailType + tailEnds[rel]);
   }
   fclose(f_type);
 
@@ -594,7 +651,6 @@ bool find(intT h, intT t, intT r) {
 }
 
 void testMode(int tid) {
-  #pragma omp parallel for
   for (intT i = 0; i < testTripleNum; i++) {
     intT h = testList[i].h, t = testList[i].t, r = testList[i].r, label = testList[i].label;
     floatT *hVec = eVecBuf + h * dimension;
@@ -641,33 +697,32 @@ void testMode(int tid) {
         }
       }
     }
-    if (l_filter_s < 10) { __sync_fetch_and_add(l_filter_tot+0, 1); }
-    if (l_s < 10)        { __sync_fetch_and_add(l_tot+0, 1); }
-    if (r_filter_s < 10) { __sync_fetch_and_add(r_filter_tot+0, 1); }
-    if (r_s < 10)        { __sync_fetch_and_add(r_tot+0, 1); }
-    
-    __sync_fetch_and_add(l_filter_rank+0, l_filter_s);
-    __sync_fetch_and_add(r_filter_rank+0, r_filter_s);
-    __sync_fetch_and_add(l_rank+0, l_s);
-    __sync_fetch_and_add(r_rank+0, r_s);
+    if (l_filter_s < 10) l_filter_tot[0] += 1;
+    if (l_s < 10) l_tot[0] += 1;
+    if (r_filter_s < 10) r_filter_tot[0] += 1;
+    if (r_s < 10) r_tot[0] += 1;
+    l_filter_rank[0] += l_filter_s;
+    r_filter_rank[0] += r_filter_s;
+    l_rank[0] += l_s;
+    r_rank[0] += r_s;
 
-    if (l_filter_s < 10) { __sync_fetch_and_add(l_filter_tot+label, 1); }
-    if (l_s < 10)        { __sync_fetch_and_add(l_tot+label, 1); }
-    if (r_filter_s < 10) { __sync_fetch_and_add(r_filter_tot+label, 1); }
-    if (r_s < 10)        { __sync_fetch_and_add(r_tot+label, 1); }
-    __sync_fetch_and_add(l_filter_rank+label, l_filter_s);
-    __sync_fetch_and_add(r_filter_rank+label, r_filter_s);
-    __sync_fetch_and_add(l_rank+label, l_s);
-    __sync_fetch_and_add(r_rank+label, r_s); 
+    if (l_filter_s < 10) l_filter_tot[label] += 1;
+    if (l_s < 10) l_tot[label] += 1;
+    if (r_filter_s < 10) r_filter_tot[label] += 1;
+    if (r_s < 10) r_tot[label] += 1;
+    l_filter_rank[label] += l_filter_s;
+    r_filter_rank[label] += r_filter_s;
+    l_rank[label] += l_s;
+    r_rank[label] += r_s;
 
-    if (l_filter_s_constrain < 10) { __sync_fetch_and_add(l_filter_tot+5, 1); }
-    if (l_s_constrain < 10)        { __sync_fetch_and_add(l_tot+5, 1); }
-    if (r_filter_s_constrain < 10) { __sync_fetch_and_add(r_filter_tot+5, 1); }
-    if (r_s_constrain < 10)        { __sync_fetch_and_add(r_tot+5, 1); }
-    __sync_fetch_and_add(l_filter_rank+5, l_filter_s_constrain);
-    __sync_fetch_and_add(r_filter_rank+5, r_filter_s_constrain);
-    __sync_fetch_and_add(l_rank+5, l_s_constrain);
-    __sync_fetch_and_add(r_rank+5, r_s_constrain); 
+    if (l_filter_s_constrain < 10) l_filter_tot[5] += 1;
+    if (l_s_constrain < 10) l_tot[5] += 1;
+    if (r_filter_s_constrain < 10) r_filter_tot[5] += 1;
+    if (r_s_constrain < 10) r_tot[5] += 1;
+    l_filter_rank[5] += l_filter_s_constrain;
+    r_filter_rank[5] += r_filter_s_constrain;
+    l_rank[5] += l_s_constrain;
+    r_rank[5] += r_s_constrain;
   }
 }
 
@@ -675,7 +730,6 @@ void test() {
   struct timeval stt; gettimeofday(&stt, NULL);
   printf("START TESTING ...\n");
 
-  omp_set_num_threads(threads);
   testMode(0);
   for (int i = 0; i <= 0; i++) {
     printf("left %f %f\n", 1.0*l_rank[i] / testTripleNum, 1.0*l_tot[i] / testTripleNum);
@@ -704,7 +758,6 @@ void testFinish() {
   free(vecBuf);
   free(headBegins);
   free(tripleList);
-  free(headType);
 }
 
-#endif // !PARTRANSE_Hd
+#endif // !MPITRANSE_H

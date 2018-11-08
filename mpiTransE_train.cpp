@@ -4,16 +4,21 @@
 #include <getopt.h>
 #include <string.h>
 
+#include <mpi.h>
+
 #include "util.h"
-#include "transE.h"
+#include "mpiTransE.h"
 
 // Hyperparameters
 extern floatT alpha;
-extern floatT margin; 
+extern floatT margin;
 extern intT dimension;
 extern intT bernFlag;
 extern intT epochs;
 extern intT nbatches;
+
+//MPI related variables
+extern int partitions, partitionId;
 
 // Arguments
 extern intT loadBinaryFlag;
@@ -22,6 +27,7 @@ extern std::string inputDir;
 extern std::string outputDir;
 extern std::string loadDir;
 extern std::string note;
+
 
 static const char *optString = "s:i:o:Bl:bN:e:n:a:m:vh?";
 
@@ -146,11 +152,18 @@ void parseCmdArgs(int argc, char *argv[]) {
 }
 
 int main(int argc, char *argv[]) {
+  MPI_Init(&argc, &argv);
+  MPI_Comm_size(MPI_COMM_WORLD, &partitions);
+  MPI_Comm_rank(MPI_COMM_WORLD, &partitionId);
+
   parseCmdArgs(argc, argv);
+
   trainInit();
   if (loadDir != "") load();
   train();
   if (outputDir != "") output();
   trainFinish();
+
+  MPI_Finalize();
   return 0;
 }

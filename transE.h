@@ -112,7 +112,7 @@ void trainInit() {
   tailBegins = headEnds   + entityNum;
   tailEnds   = tailBegins + entityNum;
 
-  headMeanList = (floatT *) malloc(relationNum * 2 * sizeof(floatT));
+  headMeanList = (floatT *) malloc(relationNum*2 * sizeof(floatT));
   tailMeanList = headMeanList + relationNum;
 
   fin = fopen((inputDir + "train2id.txt").c_str(), "r");
