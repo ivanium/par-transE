@@ -88,66 +88,66 @@ void show_args() {
   printf("-----------------------------\n");
 }
 
-#define parseCmdArgs(argc, argv) {                                \
-  int opt = 0;                                                    \
-  int longIndex = 0;                                              \
-  bool verbose = false;                                           \
-                                                                  \
-  /* Initialize global Args before we get to work. */             \
-                                                                  \
-  opt = getopt_long(argc, argv, optString, longOpts, &longIndex); \
-  while (opt != -1) {                                             \
-    switch (opt) {                                                \
-    case 's':                                                     \
-      dimension = atoi(optarg);                                   \
-      break;                                                      \
-    case 'i':                                                     \
-      inputDir = optarg;                                          \
-      break;                                                      \
-    case 'o':                                                     \
-      outputDir = optarg;                                         \
-      break;                                                      \
-    case 'B':                                                     \
-      outBinaryFlag = 1;                                          \
-      break;                                                      \
-    case 'l':                                                     \
-      loadDir = optarg;                                           \
-      break;                                                      \
-    case 'b':                                                     \
-      loadBinaryFlag = 1;                                         \
-      break;                                                      \
-    case 'N':                                                     \
-      note = optarg;                                              \
-      break;                                                      \
-    case 't':                                                     \
-      threads = atoi(optarg);                                     \
-      break;                                                      \
-    case 'e':                                                     \
-      epochs = atoi(optarg);                                      \
-      break;                                                      \
-    case 'n':                                                     \
-      nbatches = atoi(optarg);                                    \
-      break;                                                      \
-    case 'a':                                                     \
-      alpha = atoi(optarg);                                       \
-      break;                                                      \
-    case 'm':                                                     \
-      margin = atoi(optarg);                                      \
-      break;                                                      \
-    case 'v':                                                     \
-      verbose = true;                                             \
-      break;                                                      \
-    case 'h': /* fall-through is intentional */                   \
-    case '?':                                                     \
-      display_usage();                                            \
-      break;                                                      \
-    default:                                                      \
-      /* Won't actually get here. */                              \
-      break;                                                      \
-    }                                                             \
-    opt=getopt_long(argc, argv, optString, longOpts, &longIndex); \
-  }                                                               \
-  if (verbose) show_args();                                       \
+void parseCmdArgs(int argc, char *argv[]) {
+  int opt = 0;
+  int longIndex = 0;
+  bool verbose = false;
+
+  /* Initialize global Args before we get to work. */
+
+  opt = getopt_long(argc, argv, optString, longOpts, &longIndex);
+  while (opt != -1) {
+    switch (opt) {
+    case 's':
+      dimension = atoi(optarg);
+      break;
+    case 'i':
+      inputDir = optarg;
+      break;
+    case 'o':
+      outputDir = optarg;
+      break;
+    case 'B':
+      outBinaryFlag = 1;
+      break;
+    case 'l':
+      loadDir = optarg;
+      break;
+    case 'b':
+      loadBinaryFlag = 1;
+      break;
+    case 'N':
+      note = optarg;
+      break;
+    case 't':
+      threads = atoi(optarg);
+      break;
+    case 'e':
+      epochs = atoi(optarg);
+      break;
+    case 'n':
+      nbatches = atoi(optarg);
+      break;
+    case 'a':
+      alpha = atoi(optarg);
+      break;
+    case 'm':
+      margin = atoi(optarg);
+      break;
+    case 'v':
+      verbose = true;
+      break;
+    case 'h': /* fall-through is intentional */
+    case '?':
+      display_usage();
+      break;
+    default:
+      /* Won't actually get here. */
+      break;
+    }
+    opt=getopt_long(argc, argv, optString, longOpts, &longIndex);
+  }
+  if (verbose) show_args();
 }
 
 int main(int argc, char *argv[]) {
