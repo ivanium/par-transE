@@ -168,12 +168,10 @@ void trainInit() {
   trainTail = trainHead + tripleNum;
 
   // Initialize vectors and calc stats
-  for (intT i = 0; i < relationNum; i++) {
-    for (int ii = 0; ii < dimension; ii++) {
-      rVecBuf[i*dimension + ii] = randn(&seed, 0.0, 1.0/dimension, -6/sqrt(dimension), 6/sqrt(dimension));
-    }
+  for (intT i = 0; i < rLocalNum * dimension; i++) {
+    rVecBuf[i] = randn(&seed, 0.0, 1.0/dimension, -6/sqrt(dimension), 6/sqrt(dimension));
   }
-  for (intT i = 0; i < entityNum; i++) {
+  for (intT i = 0; i < eLocalNum; i++) {
     for (int ii = 0; ii < dimension; ii++) {
       eVecBuf[i*dimension + ii] = randn(&seed, 0.0, 1.0/dimension, -6/sqrt(dimension), 6/sqrt(dimension));
     }
@@ -384,8 +382,10 @@ void train_thread() {
     if (j == hIdx) { jVec = hVec; } else if (j == tIdx) { jVec = tVec; } else { jVec = tVec + dimension; }
     rVec = jVec + dimension;
 
+    // MPI_Win_fence(0, vecWin);
     getEntityVec(hIdx, hVec); getEntityVec(tIdx, tVec); getEntityVec(j, jVec);
     getRelationVec(rIdx, rVec);
+    // MPI_Win_fence(0, vecWin);
 
     tripleTrain(hVec, tVec, rVec, jVec, jHeadFlag);
     norm(hVec, dimension); norm(tVec, dimension); norm(rVec, dimension); norm(jVec, dimension);
@@ -399,7 +399,7 @@ void train() {
   struct timeval stt; gettimeofday(&stt, NULL);
   printf("START TRAINING ...\n");
 
-  batchSize = tripleNum / nbatches;
+  batchSize = tripleNum / (nbatches * partitions);
   floatT *hVec, *tVec, *rVec, *jVec;
   floatT *tmpVecBuf = (floatT *) malloc(4 * dimension * sizeof(floatT));
 
@@ -408,6 +408,7 @@ void train() {
     res = 0.0;
     for (intT batch = 0; batch < nbatches; batch++) {
       for (intT pr, i, j, k = 0; k <= batchSize; k++) {
+        // i = rand_max(&seed, tripleNum / partitions) + partitionId * (tripleNum / partitions);
         i = rand_max(&seed, tripleNum);
         // i = k;
 
@@ -425,8 +426,10 @@ void train() {
         if (j == hIdx) { jVec = hVec; } else if (j == tIdx) { jVec = tVec; } else { jVec = tVec + dimension; }
         rVec = jVec + dimension;
 
+        MPI_Win_fence(0, vecWin);
         getEntityVec(hIdx, hVec); getEntityVec(tIdx, tVec); getEntityVec(j, jVec);
         getRelationVec(rIdx, rVec);
+        MPI_Win_fence(0, vecWin);
 
         tripleTrain(hVec, tVec, rVec, jVec, jHeadFlag);
         norm(hVec, dimension); norm(tVec, dimension); norm(rVec, dimension); norm(jVec, dimension);
@@ -436,7 +439,9 @@ void train() {
       }
     }
     MPI_Allreduce(&res, &globalRes, 1, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
-    printf("epoch %d, local loss: %.3f, global loss: %.3f\n", e, res, globalRes);
+    if (partitionId == 0) {
+      printf("epoch %d, local loss: %.3f, global loss: %.3f\n", e, res, globalRes);
+    }
   }
   MPI_Win_fence(0, vecWin);
 
