@@ -129,7 +129,7 @@ inline void putRelationVec(intT r, floatT *rBuf) {
 // TRAIN
 void trainInit() {
   struct timeval stt; gettimeofday(&stt, NULL);
-  printf("START TRAIN INITIALIZATION ...\n");
+  if (partitionId == 0) { printf("START TRAIN INITIALIZATION ...\n"); }
 
   seed = (ULL)partitionId;
 
@@ -238,7 +238,7 @@ void trainInit() {
   // cleanup temp buffer
   free (rFreqList);
   struct timeval end; gettimeofday(&end, NULL);
-  printf("FINISH TRAIN INITIALIZATION, INIT duration: %.3fs\n", (end.tv_sec-stt.tv_sec) + (end.tv_usec-stt.tv_usec)/1e6);
+  if (partitionId == 0) { printf("FINISH TRAIN INITIALIZATION, INIT duration: %.3fs\n", (end.tv_sec-stt.tv_sec) + (end.tv_usec-stt.tv_usec)/1e6); }
 }
 
 void trainFinish() {
@@ -406,7 +406,7 @@ void train_thread() {
 
 void train() {
   struct timeval stt; gettimeofday(&stt, NULL);
-  printf("START TRAINING ...\n");
+  if (partitionId == 0) { printf("START TRAINING ...\n"); }
 
   batchSize = tripleNum / (nbatches * partitions);
   floatT *hVec, *tVec, *rVec, *jVec;
@@ -455,7 +455,7 @@ void train() {
   MPI_Win_fence(0, vecWin);
 
   struct timeval end; gettimeofday(&end, NULL);
-  printf("END TRAINING. TRAIN duration: %.3fs\n", (end.tv_sec-stt.tv_sec) + (end.tv_usec-stt.tv_usec)/(1e6));
+  if (partitionId == 0) { printf("END TRAINING. TRAIN duration: %.3fs\n", (end.tv_sec-stt.tv_sec) + (end.tv_usec-stt.tv_usec)/(1e6)); }
 }
 
 
@@ -558,7 +558,7 @@ intT r_filter_tot[6], r_filter_rank[6], r_tot[6], r_rank[6];
 
 void testInit() {
   struct timeval stt; gettimeofday(&stt, NULL);
-  printf("START TEST INITIALIZATION ...\n");
+  if (partitionId == 0) { printf("START TEST INITIALIZATION ...\n"); }
 
   FILE *fin;
   int tmp;
@@ -641,7 +641,7 @@ void testInit() {
   fclose(f_type);
 
   struct timeval end; gettimeofday(&end, NULL);
-  printf("END TEST INITIALIZATION. INIT duration: %.3fs\n", (end.tv_sec-stt.tv_sec) + (end.tv_usec-stt.tv_usec)/(1e6));
+  if (partitionId == 0) { printf("END TEST INITIALIZATION. INIT duration: %.3fs\n", (end.tv_sec-stt.tv_sec) + (end.tv_usec-stt.tv_usec)/(1e6)); }
 }
 
 bool find(intT h, intT t, intT r) {
