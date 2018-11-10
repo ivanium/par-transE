@@ -236,13 +236,19 @@ inline void gradiant(floatT *h1Vec, floatT *t1Vec, floatT *rVec, floatT *jVec, b
     floatT x;
     x = (t1Vec[ii] - h1Vec[ii] - rVec[ii]);
     x = x > 0 ? -alpha : alpha;
+    // #pragma omp atomic
     rVec[ii]  -= x;
+    // #pragma omp atomic
     h1Vec[ii] -= x;
+    // #pragma omp atomic
     t1Vec[ii] += x;
     x = (t2Vec[ii] - h2Vec[ii] - rVec[ii]);
     x = x > 0 ? alpha : -alpha;
+    // #pragma omp atomic
     rVec[ii]  -= x;
+    // #pragma omp atomic
     h2Vec[ii] -= x;
+    // #pragma omp atomic
     t2Vec[ii] += x;
   }
 }
@@ -703,4 +709,4 @@ void testFinish() {
   free(tripleList);
 }
 
-#endif // !PARTRANSE_Hd
+#endif // !PARTRANSE_H
