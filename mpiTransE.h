@@ -94,36 +94,39 @@ ULL seed;
 
 // MPI Communication
 inline floatT* getEntityVec(intT e, floatT *eBuf) {
-	int rank = std::min(e / eChunkNum, partitions-1);
+  int rank = std::min(e / eChunkNum, partitions-1);
   int offset = e - rank * eChunkNum;
   if (rank == partitionId) {
     return eVecBuf + offset * dimension;
   }
   int rTargetNum = rank == partitions-1 ? (relationNum - rank*rChunkNum) : rChunkNum;
-	offset += rTargetNum;
-	MPI_Get(eBuf, dimension, MPI_FLOAT, rank, offset*dimension, dimension, MPI_FLOAT, vecWin);
+  offset += rTargetNum;
+  MPI_Get(eBuf, dimension, MPI_FLOAT, rank, offset*dimension, dimension, MPI_FLOAT, vecWin);
   return eBuf;
 }
 inline void putEntityVec(intT e, floatT *eBuf) {
-	int rank = std::min(e / eChunkNum, partitions-1);
+  int rank = std::min(e / eChunkNum, partitions-1);
+  if (rank == partitionId) { return; }
+  int offset = e - rank * eChunkNum;
   int rTargetNum = rank == partitions-1 ? (relationNum - rank*rChunkNum) : rChunkNum;
-	int offset = rTargetNum + e - rank * eChunkNum;
-	MPI_Put(eBuf, dimension, MPI_FLOAT, rank, offset*dimension, dimension, MPI_FLOAT, vecWin);
+  offset += rTargetNum;
+  MPI_Put(eBuf, dimension, MPI_FLOAT, rank, offset*dimension, dimension, MPI_FLOAT, vecWin);
 }
 
 inline floatT* getRelationVec(intT r, floatT *rBuf) {
-	int rank = std::min(r / rChunkNum, partitions-1);
-	int offset = r - rank * rChunkNum;
+  int rank = std::min(r / rChunkNum, partitions-1);
+  int offset = r - rank * rChunkNum;
   if (rank == partitionId) {
     return rVecBuf + offset*dimension;
   }
-	MPI_Get(rBuf, dimension, MPI_FLOAT, rank, offset*dimension, dimension, MPI_FLOAT, vecWin);
+  MPI_Get(rBuf, dimension, MPI_FLOAT, rank, offset*dimension, dimension, MPI_FLOAT, vecWin);
   return rBuf;
 }
 inline void putRelationVec(intT r, floatT *rBuf) {
-	int rank = std::min(r / rChunkNum, partitions-1);
-	int offset = r - rank * rChunkNum;
-	MPI_Put(rBuf, dimension, MPI_FLOAT, rank, offset*dimension, dimension, MPI_FLOAT, vecWin);
+  int rank = std::min(r / rChunkNum, partitions-1);
+  if (rank == partitionId) { return; }
+  int offset = r - rank * rChunkNum;
+  MPI_Put(rBuf, dimension, MPI_FLOAT, rank, offset*dimension, dimension, MPI_FLOAT, vecWin);
 }
 
 // TRAIN
@@ -750,19 +753,19 @@ void test() {
     printf("left(filter) %f %f\n", 1.0*l_filter_rank[i] / testTripleNum, 1.0*l_filter_tot[i] / testTripleNum);
     printf("right %f %f\n", 1.0*r_rank[i] / testTripleNum, 1.0*r_tot[i] / testTripleNum);
     printf("right(filter) %f %f\n", 1.0*r_filter_rank[i] / testTripleNum, 1.0*r_filter_tot[i] / testTripleNum);
-	}
+  }
   for (int i = 5; i <= 5; i++) {
     printf("left %f %f\n", 1.0*l_rank[i] / testTripleNum, 1.0*l_tot[i] / testTripleNum);
     printf("left(filter) %f %f\n", 1.0*l_filter_rank[i] / testTripleNum, 1.0*l_filter_tot[i] / testTripleNum);
     printf("right %f %f\n", 1.0*r_rank[i] / testTripleNum, 1.0*r_tot[i] / testTripleNum);
     printf("right(filter) %f %f\n", 1.0*r_filter_rank[i] / testTripleNum, 1.0*r_filter_tot[i] / testTripleNum);
   }
-	for (int i = 1; i <= 4; i++) {
+  for (int i = 1; i <= 4; i++) {
     printf("left %f %f\n", 1.0*l_rank[i] / nnTotal[i], 1.0*l_tot[i] / nnTotal[i]);
     printf("left(filter) %f %f\n", 1.0*l_filter_rank[i] / nnTotal[i], 1.0*l_filter_tot[i] / nnTotal[i]);
     printf("right %f %f\n", 1.0*r_rank[i] / nnTotal[i], 1.0*r_tot[i] / nnTotal[i]);
     printf("right(filter) %f %f\n", 1.0*r_filter_rank[i] / nnTotal[i], 1.0*r_filter_tot[i] / nnTotal[i]);
-	}
+  }
 
   struct timeval end; gettimeofday(&end, NULL);
   printf("END TESTING. TEST duration: %.3fs\n", (end.tv_sec-stt.tv_sec) + (end.tv_usec-stt.tv_usec)/(1e6));
