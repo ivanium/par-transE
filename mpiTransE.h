@@ -93,10 +93,14 @@ ULL seed;
 
 
 // MPI Communication
-inline void getEntityVec(intT e, floatT *eBuf) {
+inline floatT* getEntityVec(intT e, floatT *eBuf) {
 	int rank = std::min(e / eChunkNum, partitions-1);
+  int offset = e - rank * eChunkNum;
+  if (rank == partitionId) {
+    return eVecBuf + offset * dimension;
+  }
   int rTargetNum = rank == partitions-1 ? (relationNum - rank*rChunkNum) : rChunkNum;
-	int offset = rTargetNum + e - rank * eChunkNum;
+	offset += rTargetNum;
 	MPI_Get(eBuf, dimension, MPI_FLOAT, rank, offset*dimension, dimension, MPI_FLOAT, vecWin);
 }
 inline void putEntityVec(intT e, floatT *eBuf) {
@@ -106,9 +110,12 @@ inline void putEntityVec(intT e, floatT *eBuf) {
 	MPI_Put(eBuf, dimension, MPI_FLOAT, rank, offset*dimension, dimension, MPI_FLOAT, vecWin);
 }
 
-inline void getRelationVec(intT r, floatT *rBuf) {
+inline floatT* getRelationVec(intT r, floatT *rBuf) {
 	int rank = std::min(r / rChunkNum, partitions-1);
 	int offset = r - rank * rChunkNum;
+  if (rank == partitionId) {
+    return rVecBuf + offset*dimension;
+  }
 	MPI_Get(rBuf, dimension, MPI_FLOAT, rank, offset*dimension, dimension, MPI_FLOAT, vecWin);
 }
 inline void putRelationVec(intT r, floatT *rBuf) {
@@ -382,10 +389,10 @@ void train_thread() {
     if (j == hIdx) { jVec = hVec; } else if (j == tIdx) { jVec = tVec; } else { jVec = tVec + dimension; }
     rVec = jVec + dimension;
 
-    // MPI_Win_fence(0, vecWin);
-    getEntityVec(hIdx, hVec); getEntityVec(tIdx, tVec); getEntityVec(j, jVec);
-    getRelationVec(rIdx, rVec);
-    // MPI_Win_fence(0, vecWin);
+    MPI_Win_fence(0, vecWin);
+    hVec = getEntityVec(hIdx, hVec); tVec = getEntityVec(tIdx, tVec); jVec = getEntityVec(j, jVec);
+    rVec = getRelationVec(rIdx, rVec);
+    MPI_Win_fence(0, vecWin);
 
     tripleTrain(hVec, tVec, rVec, jVec, jHeadFlag);
     norm(hVec, dimension); norm(tVec, dimension); norm(rVec, dimension); norm(jVec, dimension);
@@ -427,8 +434,8 @@ void train() {
         rVec = jVec + dimension;
 
         MPI_Win_fence(0, vecWin);
-        getEntityVec(hIdx, hVec); getEntityVec(tIdx, tVec); getEntityVec(j, jVec);
-        getRelationVec(rIdx, rVec);
+        hVec = getEntityVec(hIdx, hVec); tVec = getEntityVec(tIdx, tVec); jVec = getEntityVec(j, jVec);
+        rVec = getRelationVec(rIdx, rVec);
         MPI_Win_fence(0, vecWin);
 
         tripleTrain(hVec, tVec, rVec, jVec, jHeadFlag);
