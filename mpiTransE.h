@@ -102,6 +102,7 @@ inline floatT* getEntityVec(intT e, floatT *eBuf) {
   int rTargetNum = rank == partitions-1 ? (relationNum - rank*rChunkNum) : rChunkNum;
 	offset += rTargetNum;
 	MPI_Get(eBuf, dimension, MPI_FLOAT, rank, offset*dimension, dimension, MPI_FLOAT, vecWin);
+  return eBuf;
 }
 inline void putEntityVec(intT e, floatT *eBuf) {
 	int rank = std::min(e / eChunkNum, partitions-1);
@@ -117,6 +118,7 @@ inline floatT* getRelationVec(intT r, floatT *rBuf) {
     return rVecBuf + offset*dimension;
   }
 	MPI_Get(rBuf, dimension, MPI_FLOAT, rank, offset*dimension, dimension, MPI_FLOAT, vecWin);
+  return rBuf;
 }
 inline void putRelationVec(intT r, floatT *rBuf) {
 	int rank = std::min(r / rChunkNum, partitions-1);
