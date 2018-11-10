@@ -148,7 +148,7 @@ void parseCmdArgs(int argc, char *argv[]) {
     }
     opt = getopt_long(argc, argv, optString, longOpts, &longIndex);
   }
-  if (verbose) show_args();
+  if (verbose && partitionId == 0) show_args();
 }
 
 int main(int argc, char *argv[]) {

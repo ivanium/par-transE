@@ -405,6 +405,8 @@ void train_thread() {
     putEntityVec(hIdx, hVec); putEntityVec(tIdx, tVec); putEntityVec(j, jVec);
     putRelationVec(rIdx, rVec);
   }
+
+  free(tmpVecBuf);
 }
 
 void train() {
@@ -456,6 +458,7 @@ void train() {
     }
   }
   MPI_Win_fence(0, vecWin);
+  free(tmpVecBuf);
 
   struct timeval end; gettimeofday(&end, NULL);
   if (partitionId == 0) { printf("END TRAINING. TRAIN duration: %.3fs\n", (end.tv_sec-stt.tv_sec) + (end.tv_usec-stt.tv_usec)/(1e6)); }
@@ -466,15 +469,15 @@ void train() {
 void load() {
   if (loadBinaryFlag) {
     struct stat statbuf;
-    if (stat((loadDir + "entity2vec" + note + ".bin").c_str(), &statbuf) != -1) {  
-      intT fd = open((loadDir + "entity2vec" + note + ".bin").c_str(), O_RDONLY);
+    if (stat((loadDir + "entity2vec_" + std::to_string(partitionId) + note + ".bin").c_str(), &statbuf) != -1) {  
+      intT fd = open((loadDir + "entity2vec_" + std::to_string(partitionId) + note + ".bin").c_str(), O_RDONLY);
       floatT* eVecTmp = (floatT*)mmap(NULL, statbuf.st_size, PROT_READ, MAP_PRIVATE, fd, 0); 
       memcpy(eVecBuf, eVecTmp, statbuf.st_size);
       munmap(eVecTmp, statbuf.st_size);
       close(fd);
     }
-    if (stat((loadDir + "relation2vec" + note + ".bin").c_str(), &statbuf) != -1) {  
-      intT fd = open((loadDir + "relation2vec" + note + ".bin").c_str(), O_RDONLY);
+    if (stat((loadDir + "relation2vec_" + std::to_string(partitionId) + note + ".bin").c_str(), &statbuf) != -1) {  
+      intT fd = open((loadDir + "relation2vec_" + std::to_string(partitionId) + note + ".bin").c_str(), O_RDONLY);
       floatT* rVecTmp =(floatT*)mmap(NULL, statbuf.st_size, PROT_READ, MAP_PRIVATE, fd, 0); 
       memcpy(rVecBuf, rVecTmp, statbuf.st_size);
       munmap(rVecTmp, statbuf.st_size);
@@ -483,10 +486,10 @@ void load() {
   } else {
     FILE *fin;
     int tmp;
-    fin = fopen((loadDir + "entity2vec" + note + ".vec").c_str(), "r");
+    fin = fopen((loadDir + "entity2vec_" + std::to_string(partitionId) + note + ".vec").c_str(), "r");
 
     int offset = 0;
-    for (intT i = 0; i < entityNum; i++) {
+    for (intT i = 0; i < eLocalNum; i++) {
       for (intT ii = 0; ii < dimension; ii++) {
         tmp = fscanf(fin, "%f", &eVecBuf[offset + ii]);
       }
@@ -494,8 +497,8 @@ void load() {
     }
     fclose(fin);
     offset = 0;
-    fin = fopen((loadDir + "relation2vec" + note + ".vec").c_str(), "r");
-    for (intT i = 0; i < relationNum; i++) {
+    fin = fopen((loadDir + "relation2vec_" + std::to_string(partitionId) + note + ".vec").c_str(), "r");
+    for (intT i = 0; i < rLocalNum; i++) {
       for (intT ii = 0; ii < dimension; ii++) {
         tmp = fscanf(fin, "%f", &rVecBuf[offset + ii]);
       }
@@ -509,15 +512,15 @@ void output() {
   if (outBinaryFlag) {
     intT len, tot;
     floatT *head;
-    FILE* f2 = fopen((outputDir + "relation2vec" + note + ".bin").c_str(), "wb");
-    FILE* f3 = fopen((outputDir + "entity2vec" + note + ".bin").c_str(), "wb");
-    len = relationNum * dimension; tot = 0;
+    FILE* f2 = fopen((outputDir + "relation2vec_" + std::to_string(partitionId) + note + ".bin").c_str(), "wb");
+    FILE* f3 = fopen((outputDir + "entity2vec_"   + std::to_string(partitionId) + note + ".bin").c_str(), "wb");
+    len = rLocalNum * dimension; tot = 0;
     head = rVecBuf;
     while (tot < len) {
       intT sum = fwrite(head + tot, sizeof(floatT), len - tot, f2);
       tot += sum;
     }
-    len = entityNum * dimension; tot = 0;
+    len = eLocalNum * dimension; tot = 0;
     head = eVecBuf;
     while (tot < len) {
       intT sum = fwrite(head + tot, sizeof(floatT), len - tot, f3);
@@ -526,10 +529,10 @@ void output() {
     fclose(f2);
     fclose(f3);
   } else {
-    FILE* f2 = fopen((outputDir + "relation2vec" + note + ".vec").c_str(), "w");
-    FILE* f3 = fopen((outputDir + "entity2vec" + note + ".vec").c_str(), "w");
+    FILE* f2 = fopen((outputDir + "relation2vec_" + std::to_string(partitionId) + note + ".vec").c_str(), "w");
+    FILE* f3 = fopen((outputDir + "entity2vec_"   + std::to_string(partitionId) + note + ".vec").c_str(), "w");
     intT offset = 0;
-    for (intT i = 0; i < relationNum; i++) {
+    for (intT i = 0; i < rLocalNum; i++) {
       for (intT ii = 0; ii < dimension; ii++) {
         fprintf(f2, "%.6f\t", rVecBuf[offset + ii]);
       }
@@ -538,7 +541,7 @@ void output() {
     }
     fclose(f2);
     offset = 0;
-    for (intT i = 0; i < entityNum; i++) {
+    for (intT i = 0; i < eLocalNum; i++) {
       for (intT ii = 0; ii < dimension; ii++) {
         fprintf(f3, "%.6f\t", eVecBuf[offset + ii]);
       }
