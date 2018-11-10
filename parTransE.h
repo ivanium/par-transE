@@ -481,7 +481,7 @@ void output() {
 
 // TEST
 intT testTripleNum, trainTripleNum, validTripleNum;
-intT headType[1000000], tailType[1000000];
+intT *headType, *tailType;
 intT nnTotal[5];
 LabelTriple *tripleList, *testList;
 
@@ -521,6 +521,9 @@ void testInit() {
   tripleNum = testTripleNum + trainTripleNum + validTripleNum;
   tripleList = (LabelTriple *) malloc(tripleNum * dimension * sizeof(LabelTriple));
   testList = (LabelTriple *) malloc(testTripleNum * dimension * sizeof(LabelTriple));
+
+  headType = (intT *) malloc(tripleNum * 2 * sizeof(intT));
+  tailType = headType + tripleNum;
 
   intT label, h, t, r;
   for (intT i = 0; i < testTripleNum; i++) {
@@ -707,6 +710,7 @@ void testFinish() {
   free(vecBuf);
   free(headBegins);
   free(tripleList);
+  free(headType);
 }
 
 #endif // !PARTRANSE_H
