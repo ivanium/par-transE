@@ -13,6 +13,7 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 
+#include <omp.h>
 #include <mpi.h>
 
 #include "parallel.h"
@@ -61,6 +62,7 @@ intT dimension= 100;
 intT bernFlag = 0;
 intT epochs   = 1000;
 intT nbatches = 1;
+intT threads  = 16;
 
 //MPI related variables
 int partitions, partitionId;
@@ -89,47 +91,51 @@ floatT *headMeanList, *tailMeanList;
 floatT res = 0.0;
 floatT globalRes = 0.0;
 intT batchSize;
+intT blockSize;
 ULL seed;
 
 
 // MPI Communication
 inline floatT* getEntityVec(intT e, floatT *eBuf) {
-	int rank = std::min(e / eChunkNum, partitions-1);
+  int rank = std::min(e / eChunkNum, partitions-1);
   int offset = e - rank * eChunkNum;
   if (rank == partitionId) {
     return eVecBuf + offset * dimension;
   }
   int rTargetNum = rank == partitions-1 ? (relationNum - rank*rChunkNum) : rChunkNum;
-	offset += rTargetNum;
-	MPI_Get(eBuf, dimension, MPI_FLOAT, rank, offset*dimension, dimension, MPI_FLOAT, vecWin);
+  offset += rTargetNum;
+  MPI_Get(eBuf, dimension, MPI_FLOAT, rank, offset*dimension, dimension, MPI_FLOAT, vecWin);
   return eBuf;
 }
 inline void putEntityVec(intT e, floatT *eBuf) {
-	int rank = std::min(e / eChunkNum, partitions-1);
+  int rank = std::min(e / eChunkNum, partitions-1);
+  if (rank == partitionId) { return; }
+  int offset = e - rank * eChunkNum;
   int rTargetNum = rank == partitions-1 ? (relationNum - rank*rChunkNum) : rChunkNum;
-	int offset = rTargetNum + e - rank * eChunkNum;
-	MPI_Put(eBuf, dimension, MPI_FLOAT, rank, offset*dimension, dimension, MPI_FLOAT, vecWin);
+  offset += rTargetNum;
+  MPI_Put(eBuf, dimension, MPI_FLOAT, rank, offset*dimension, dimension, MPI_FLOAT, vecWin);
 }
 
 inline floatT* getRelationVec(intT r, floatT *rBuf) {
-	int rank = std::min(r / rChunkNum, partitions-1);
-	int offset = r - rank * rChunkNum;
+  int rank = std::min(r / rChunkNum, partitions-1);
+  int offset = r - rank * rChunkNum;
   if (rank == partitionId) {
     return rVecBuf + offset*dimension;
   }
-	MPI_Get(rBuf, dimension, MPI_FLOAT, rank, offset*dimension, dimension, MPI_FLOAT, vecWin);
+  MPI_Get(rBuf, dimension, MPI_FLOAT, rank, offset*dimension, dimension, MPI_FLOAT, vecWin);
   return rBuf;
 }
 inline void putRelationVec(intT r, floatT *rBuf) {
-	int rank = std::min(r / rChunkNum, partitions-1);
-	int offset = r - rank * rChunkNum;
-	MPI_Put(rBuf, dimension, MPI_FLOAT, rank, offset*dimension, dimension, MPI_FLOAT, vecWin);
+  int rank = std::min(r / rChunkNum, partitions-1);
+  if (rank == partitionId) { return; }
+  int offset = r - rank * rChunkNum;
+  MPI_Put(rBuf, dimension, MPI_FLOAT, rank, offset*dimension, dimension, MPI_FLOAT, vecWin);
 }
 
 // TRAIN
 void trainInit() {
   struct timeval stt; gettimeofday(&stt, NULL);
-  printf("START TRAIN INITIALIZATION ...\n");
+  if (partitionId == 0) { printf("START TRAIN INITIALIZATION ...\n"); }
 
   seed = (ULL)partitionId;
 
@@ -177,9 +183,11 @@ void trainInit() {
   trainTail = trainHead + tripleNum;
 
   // Initialize vectors and calc stats
+  #pragma omp parallel for
   for (intT i = 0; i < rLocalNum * dimension; i++) {
     rVecBuf[i] = randn(&seed, 0.0, 1.0/dimension, -6/sqrt(dimension), 6/sqrt(dimension));
   }
+  #pragma omp parallel for
   for (intT i = 0; i < eLocalNum; i++) {
     for (int ii = 0; ii < dimension; ii++) {
       eVecBuf[i*dimension + ii] = randn(&seed, 0.0, 1.0/dimension, -6/sqrt(dimension), 6/sqrt(dimension));
@@ -197,8 +205,10 @@ void trainInit() {
   std::sort(trainHead, trainHead + tripleNum, cmp_head());
   std::sort(trainTail, trainTail + tripleNum, cmp_tail());
 
+  #pragma omp parallel for
   for (intT i = 0; i < tripleNum; i++) {
-    rFreqList[trainHead[i].r]++;
+    // rFreqList[trainHead[i].r]++;
+    __sync_fetch_and_add(rFreqList + trainHead[i].r, 1);
   }
 
   headBegins[0] = tailBegins[0] = 0;
@@ -218,6 +228,7 @@ void trainInit() {
   headEnds[trainHead[tripleNum -1].h] = tripleNum - 1;
   tailEnds[trainTail[tripleNum -1].t] = tripleNum - 1;
 
+  #pragma omp parallel for
   for (intT i = 0; i < entityNum; i++) {
     for (intT j = headBegins[i] + 1; j <= headEnds[i]; j++)
       if (trainHead[j].r != trainHead[j - 1].r)
@@ -231,6 +242,7 @@ void trainInit() {
       tailMeanList[trainTail[tailBegins[i]].r] += 1.0;
   }
 
+  #pragma omp parallel for
   for (intT i = 0; i < relationNum; i++) {
     headMeanList[i] = rFreqList[i] / headMeanList[i];
     tailMeanList[i] = rFreqList[i] / tailMeanList[i];
@@ -238,7 +250,7 @@ void trainInit() {
   // cleanup temp buffer
   free (rFreqList);
   struct timeval end; gettimeofday(&end, NULL);
-  printf("FINISH TRAIN INITIALIZATION, INIT duration: %.3fs\n", (end.tv_sec-stt.tv_sec) + (end.tv_usec-stt.tv_usec)/1e6);
+  if (partitionId == 0) { printf("FINISH TRAIN INITIALIZATION, INIT duration: %.3fs\n", (end.tv_sec-stt.tv_sec) + (end.tv_usec-stt.tv_usec)/1e6); }
 }
 
 void trainFinish() {
@@ -328,7 +340,7 @@ inline intT getNegTail(ULL *id, intT h, intT r) {
     mid = (lef + rig) >> 1;
     if (trainHead[mid].t - mid + ll - 1 < tmp)
       lef = mid;
-    else 
+    else
       rig = mid;
   }
   return tmp + lef - ll + 1;
@@ -364,18 +376,23 @@ inline intT getNegHead(ULL *id, intT t, intT r) {
     mid = (lef + rig) >> 1;
     if (trainTail[mid].h - mid + ll - 1 < tmp)
       lef = mid;
-    else 
+    else
       rig = mid;
   }
   return tmp + lef - ll + 1;
 }
 
-void train_thread() {
+void train_thread(int tid) {
   floatT *hVec, *tVec, *rVec, *jVec;
   floatT *tmpVecBuf = (floatT *) malloc(4 * dimension * sizeof(floatT));
 
-  for (intT pr, i, j, k = batchSize; k >= 0; k--) {
-    i = rand_max(&seed, tripleNum);
+  intT begin = tid*blockSize;
+  intT end   = tid == threads-1 ? batchSize : begin + blockSize;
+
+  for (intT k = begin; k < end; k++) {
+    intT pr, i, j;
+    // i = rand_max(&seed, tripleNum);
+    i = k;
 
     intT hIdx = trainList[i].h; intT tIdx = trainList[i].t; intT rIdx = trainList[i].r;
 
@@ -402,13 +419,16 @@ void train_thread() {
     putEntityVec(hIdx, hVec); putEntityVec(tIdx, tVec); putEntityVec(j, jVec);
     putRelationVec(rIdx, rVec);
   }
+
+  free(tmpVecBuf);
 }
 
 void train() {
   struct timeval stt; gettimeofday(&stt, NULL);
-  printf("START TRAINING ...\n");
+  if (partitionId == 0) { printf("START TRAINING ...\n"); }
 
   batchSize = tripleNum / (nbatches * partitions);
+  blockSize = batchSize / threads;
   floatT *hVec, *tVec, *rVec, *jVec;
   floatT *tmpVecBuf = (floatT *) malloc(4 * dimension * sizeof(floatT));
 
@@ -416,36 +436,40 @@ void train() {
   for (intT e = 0; e < epochs; e++) {
     res = 0.0;
     for (intT batch = 0; batch < nbatches; batch++) {
-      for (intT pr, i, j, k = 0; k <= batchSize; k++) {
-        // i = rand_max(&seed, tripleNum / partitions) + partitionId * (tripleNum / partitions);
-        i = rand_max(&seed, tripleNum);
-        // i = k;
-
-        intT hIdx = trainList[i].h; intT tIdx = trainList[i].t; intT rIdx = trainList[i].r;
-
-        pr = bernFlag ? 1000 * headMeanList[rIdx] / (headMeanList[rIdx] + tailMeanList[rIdx])
-                      : 500;
-
-        bool jHeadFlag = rand_max(&seed, 1000) >= pr;
-        j = jHeadFlag ? getNegHead(&seed, tIdx, rIdx)
-                      : getNegTail(&seed, hIdx, rIdx);
-
-        hVec = tmpVecBuf;
-        if (tIdx == hIdx) { tVec = hVec; } else { tVec = hVec + dimension; }
-        if (j == hIdx) { jVec = hVec; } else if (j == tIdx) { jVec = tVec; } else { jVec = tVec + dimension; }
-        rVec = jVec + dimension;
-
-        MPI_Win_fence(0, vecWin);
-        hVec = getEntityVec(hIdx, hVec); tVec = getEntityVec(tIdx, tVec); jVec = getEntityVec(j, jVec);
-        rVec = getRelationVec(rIdx, rVec);
-        MPI_Win_fence(0, vecWin);
-
-        tripleTrain(hVec, tVec, rVec, jVec, jHeadFlag);
-        norm(hVec, dimension); norm(tVec, dimension); norm(rVec, dimension); norm(jVec, dimension);
-
-        putEntityVec(hIdx, hVec); putEntityVec(tIdx, tVec); putEntityVec(j, jVec);
-        putRelationVec(rIdx, rVec);
+      #pragma omp parallel for reduction(+: res)
+      for (int i = 0; i < threads; i++) {
+        train_thread(i);
       }
+      // for (intT pr, i, j, k = 0; k <= batchSize; k++) {
+      //   // i = rand_max(&seed, tripleNum / partitions) + partitionId * (tripleNum / partitions);
+      //   i = rand_max(&seed, tripleNum);
+      //   // i = k;
+
+      //   intT hIdx = trainList[i].h; intT tIdx = trainList[i].t; intT rIdx = trainList[i].r;
+
+      //   pr = bernFlag ? 1000 * headMeanList[rIdx] / (headMeanList[rIdx] + tailMeanList[rIdx])
+      //                 : 500;
+
+      //   bool jHeadFlag = rand_max(&seed, 1000) >= pr;
+      //   j = jHeadFlag ? getNegHead(&seed, tIdx, rIdx)
+      //                 : getNegTail(&seed, hIdx, rIdx);
+
+      //   hVec = tmpVecBuf;
+      //   if (tIdx == hIdx) { tVec = hVec; } else { tVec = hVec + dimension; }
+      //   if (j == hIdx) { jVec = hVec; } else if (j == tIdx) { jVec = tVec; } else { jVec = tVec + dimension; }
+      //   rVec = jVec + dimension;
+
+      //   MPI_Win_fence(0, vecWin);
+      //   hVec = getEntityVec(hIdx, hVec); tVec = getEntityVec(tIdx, tVec); jVec = getEntityVec(j, jVec);
+      //   rVec = getRelationVec(rIdx, rVec);
+      //   MPI_Win_fence(0, vecWin);
+
+      //   tripleTrain(hVec, tVec, rVec, jVec, jHeadFlag);
+      //   norm(hVec, dimension); norm(tVec, dimension); norm(rVec, dimension); norm(jVec, dimension);
+
+      //   putEntityVec(hIdx, hVec); putEntityVec(tIdx, tVec); putEntityVec(j, jVec);
+      //   putRelationVec(rIdx, rVec);
+      // }
     }
     MPI_Allreduce(&res, &globalRes, 1, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
     if (partitionId == 0) {
@@ -453,9 +477,10 @@ void train() {
     }
   }
   MPI_Win_fence(0, vecWin);
+  free(tmpVecBuf);
 
   struct timeval end; gettimeofday(&end, NULL);
-  printf("END TRAINING. TRAIN duration: %.3fs\n", (end.tv_sec-stt.tv_sec) + (end.tv_usec-stt.tv_usec)/(1e6));
+  if (partitionId == 0) { printf("END TRAINING. TRAIN duration: %.3fs\n", (end.tv_sec-stt.tv_sec) + (end.tv_usec-stt.tv_usec)/(1e6)); }
 }
 
 
@@ -463,16 +488,16 @@ void train() {
 void load() {
   if (loadBinaryFlag) {
     struct stat statbuf;
-    if (stat((loadDir + "entity2vec" + note + ".bin").c_str(), &statbuf) != -1) {  
-      intT fd = open((loadDir + "entity2vec" + note + ".bin").c_str(), O_RDONLY);
-      floatT* eVecTmp = (floatT*)mmap(NULL, statbuf.st_size, PROT_READ, MAP_PRIVATE, fd, 0); 
+    if (stat((loadDir + "entity2vec_" + std::to_string(partitionId) + note + ".bin").c_str(), &statbuf) != -1) {
+      intT fd = open((loadDir + "entity2vec_" + std::to_string(partitionId) + note + ".bin").c_str(), O_RDONLY);
+      floatT* eVecTmp = (floatT*)mmap(NULL, statbuf.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
       memcpy(eVecBuf, eVecTmp, statbuf.st_size);
       munmap(eVecTmp, statbuf.st_size);
       close(fd);
     }
-    if (stat((loadDir + "relation2vec" + note + ".bin").c_str(), &statbuf) != -1) {  
-      intT fd = open((loadDir + "relation2vec" + note + ".bin").c_str(), O_RDONLY);
-      floatT* rVecTmp =(floatT*)mmap(NULL, statbuf.st_size, PROT_READ, MAP_PRIVATE, fd, 0); 
+    if (stat((loadDir + "relation2vec_" + std::to_string(partitionId) + note + ".bin").c_str(), &statbuf) != -1) {
+      intT fd = open((loadDir + "relation2vec_" + std::to_string(partitionId) + note + ".bin").c_str(), O_RDONLY);
+      floatT* rVecTmp =(floatT*)mmap(NULL, statbuf.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
       memcpy(rVecBuf, rVecTmp, statbuf.st_size);
       munmap(rVecTmp, statbuf.st_size);
       close(fd);
@@ -480,10 +505,10 @@ void load() {
   } else {
     FILE *fin;
     int tmp;
-    fin = fopen((loadDir + "entity2vec" + note + ".vec").c_str(), "r");
+    fin = fopen((loadDir + "entity2vec_" + std::to_string(partitionId) + note + ".vec").c_str(), "r");
 
     int offset = 0;
-    for (intT i = 0; i < entityNum; i++) {
+    for (intT i = 0; i < eLocalNum; i++) {
       for (intT ii = 0; ii < dimension; ii++) {
         tmp = fscanf(fin, "%f", &eVecBuf[offset + ii]);
       }
@@ -491,8 +516,8 @@ void load() {
     }
     fclose(fin);
     offset = 0;
-    fin = fopen((loadDir + "relation2vec" + note + ".vec").c_str(), "r");
-    for (intT i = 0; i < relationNum; i++) {
+    fin = fopen((loadDir + "relation2vec_" + std::to_string(partitionId) + note + ".vec").c_str(), "r");
+    for (intT i = 0; i < rLocalNum; i++) {
       for (intT ii = 0; ii < dimension; ii++) {
         tmp = fscanf(fin, "%f", &rVecBuf[offset + ii]);
       }
@@ -506,27 +531,27 @@ void output() {
   if (outBinaryFlag) {
     intT len, tot;
     floatT *head;
-    FILE* f2 = fopen((outputDir + "relation2vec" + note + ".bin").c_str(), "wb");
-    FILE* f3 = fopen((outputDir + "entity2vec" + note + ".bin").c_str(), "wb");
-    len = relationNum * dimension; tot = 0;
+    FILE* f2 = fopen((outputDir + "relation2vec_" + std::to_string(partitionId) + note + ".bin").c_str(), "wb");
+    FILE* f3 = fopen((outputDir + "entity2vec_"   + std::to_string(partitionId) + note + ".bin").c_str(), "wb");
+    len = rLocalNum * dimension; tot = 0;
     head = rVecBuf;
     while (tot < len) {
       intT sum = fwrite(head + tot, sizeof(floatT), len - tot, f2);
       tot += sum;
     }
-    len = entityNum * dimension; tot = 0;
+    len = eLocalNum * dimension; tot = 0;
     head = eVecBuf;
     while (tot < len) {
       intT sum = fwrite(head + tot, sizeof(floatT), len - tot, f3);
       tot += sum;
-    }	
+    }
     fclose(f2);
     fclose(f3);
   } else {
-    FILE* f2 = fopen((outputDir + "relation2vec" + note + ".vec").c_str(), "w");
-    FILE* f3 = fopen((outputDir + "entity2vec" + note + ".vec").c_str(), "w");
+    FILE* f2 = fopen((outputDir + "relation2vec_" + std::to_string(partitionId) + note + ".vec").c_str(), "w");
+    FILE* f3 = fopen((outputDir + "entity2vec_"   + std::to_string(partitionId) + note + ".vec").c_str(), "w");
     intT offset = 0;
-    for (intT i = 0; i < relationNum; i++) {
+    for (intT i = 0; i < rLocalNum; i++) {
       for (intT ii = 0; ii < dimension; ii++) {
         fprintf(f2, "%.6f\t", rVecBuf[offset + ii]);
       }
@@ -535,7 +560,7 @@ void output() {
     }
     fclose(f2);
     offset = 0;
-    for (intT i = 0; i < entityNum; i++) {
+    for (intT i = 0; i < eLocalNum; i++) {
       for (intT ii = 0; ii < dimension; ii++) {
         fprintf(f3, "%.6f\t", eVecBuf[offset + ii]);
       }
@@ -558,7 +583,7 @@ intT r_filter_tot[6], r_filter_rank[6], r_tot[6], r_rank[6];
 
 void testInit() {
   struct timeval stt; gettimeofday(&stt, NULL);
-  printf("START TEST INITIALIZATION ...\n");
+  if (partitionId == 0) { printf("START TEST INITIALIZATION ...\n"); }
 
   FILE *fin;
   int tmp;
@@ -566,7 +591,7 @@ void testInit() {
   fin = fopen((inputDir + "relation2id.txt").c_str(), "r");
   tmp = fscanf(fin, "%d", &relationNum);
   fclose(fin);
-  
+
   fin = fopen((inputDir + "entity2id.txt").c_str(), "r");
   tmp = fscanf(fin, "%d", &entityNum);
   fclose(fin);
@@ -641,7 +666,7 @@ void testInit() {
   fclose(f_type);
 
   struct timeval end; gettimeofday(&end, NULL);
-  printf("END TEST INITIALIZATION. INIT duration: %.3fs\n", (end.tv_sec-stt.tv_sec) + (end.tv_usec-stt.tv_usec)/(1e6));
+  if (partitionId == 0) { printf("END TEST INITIALIZATION. INIT duration: %.3fs\n", (end.tv_sec-stt.tv_sec) + (end.tv_usec-stt.tv_usec)/(1e6)); }
 }
 
 bool find(intT h, intT t, intT r) {
@@ -750,19 +775,19 @@ void test() {
     printf("left(filter) %f %f\n", 1.0*l_filter_rank[i] / testTripleNum, 1.0*l_filter_tot[i] / testTripleNum);
     printf("right %f %f\n", 1.0*r_rank[i] / testTripleNum, 1.0*r_tot[i] / testTripleNum);
     printf("right(filter) %f %f\n", 1.0*r_filter_rank[i] / testTripleNum, 1.0*r_filter_tot[i] / testTripleNum);
-	}
+  }
   for (int i = 5; i <= 5; i++) {
     printf("left %f %f\n", 1.0*l_rank[i] / testTripleNum, 1.0*l_tot[i] / testTripleNum);
     printf("left(filter) %f %f\n", 1.0*l_filter_rank[i] / testTripleNum, 1.0*l_filter_tot[i] / testTripleNum);
     printf("right %f %f\n", 1.0*r_rank[i] / testTripleNum, 1.0*r_tot[i] / testTripleNum);
     printf("right(filter) %f %f\n", 1.0*r_filter_rank[i] / testTripleNum, 1.0*r_filter_tot[i] / testTripleNum);
   }
-	for (int i = 1; i <= 4; i++) {
+  for (int i = 1; i <= 4; i++) {
     printf("left %f %f\n", 1.0*l_rank[i] / nnTotal[i], 1.0*l_tot[i] / nnTotal[i]);
     printf("left(filter) %f %f\n", 1.0*l_filter_rank[i] / nnTotal[i], 1.0*l_filter_tot[i] / nnTotal[i]);
     printf("right %f %f\n", 1.0*r_rank[i] / nnTotal[i], 1.0*r_tot[i] / nnTotal[i]);
     printf("right(filter) %f %f\n", 1.0*r_filter_rank[i] / nnTotal[i], 1.0*r_filter_tot[i] / nnTotal[i]);
-	}
+  }
 
   struct timeval end; gettimeofday(&end, NULL);
   printf("END TESTING. TEST duration: %.3fs\n", (end.tv_sec-stt.tv_sec) + (end.tv_usec-stt.tv_usec)/(1e6));
